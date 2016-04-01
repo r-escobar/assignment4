@@ -28,6 +28,23 @@ struct Image {
   int height;
 };
 
+// new code
+struct bone
+{
+  int id;
+  int parent;
+  float dx;
+  float dy;
+  float dz;
+  float length;
+};
+
+std::vector<bone> bone_vector;
+
+std::vector<glm::vec4> ogre_vertices;
+std::vector<glm::uvec3> ogre_faces;
+// end new code
+
 int window_width = 800, window_height = 600;
 const std::string window_title = "Virtual Mannequin";
 
@@ -284,6 +301,46 @@ void LoadObj(const std::string& file, std::vector<glm::vec4>& vertices,
   in.close();
 }
 
+void LoadBones(const std::string& file)
+{
+
+    // parse ogre-skeleton.bf file into bone structs
+    std::ifstream in(file);
+    int id, parent;
+    float x, y, z;
+    while (in >> id >> parent >> x >> y >> z) 
+    {
+      
+      bone newBone;
+      newBone.id = id;
+      std::cout << "newBone id is " << newBone.id << "\n";
+      newBone.parent = parent;
+      std::cout << "newBone parent is " << newBone.parent << "\n";
+      newBone.dx = x;
+      std::cout << "newBone dx is " << newBone.dx << "\n";
+      newBone.dy = y;
+      std::cout << "newBone dy is " << newBone.dy << "\n";
+      newBone.dz = z;
+      std::cout << "newBone dz is " << newBone.dz << "\n";
+      bone_vector.push_back(newBone);
+
+    }
+
+    for(int i = 0; i < bone_vector.size(); i++)
+    {
+      if(bone_vector[i].parent != -1)
+      {
+        glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
+        glm::vec3 parent_point = glm::vec3(bone_vector[bone_vector[i].parent].dx, bone_vector[bone_vector[i].parent].dy, bone_vector[bone_vector[i].parent].dz);
+        bone_vector[i].length = glm::length(parent_point - bone_point);
+        std::cout << "bone_vector[" << i << "] length is " << bone_vector[i].length << "\n";
+      }
+
+
+    }
+
+}
+
 void SaveJPEG(const std::string& filename, int image_width, int image_height,
               const unsigned char* pixels) {
   struct jpeg_compress_struct cinfo;
@@ -530,6 +587,8 @@ int main(int argc, char* argv[]) {
   CHECK_GL_ERROR(glGenVertexArrays(kNumVaos, array_objects));
 
   // Setup the object array object.
+  LoadObj("ogre-rigged/ogre.obj", ogre_vertices, ogre_faces);
+  LoadBones("ogre-rigged/ogre-skeleton.bf");
 
   // Switch to the floor VAO.
   CHECK_GL_ERROR(glBindVertexArray(array_objects[kFloorVao]));
