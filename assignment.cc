@@ -342,7 +342,15 @@ void calculateEndpoints(Bone* currBone) {
     currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
     currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
   }
-  
+
+  if(currBone->parent != -1) {
+    int firstIndex = bone_vertices.size();
+    bone_vertices.push_back(currBone->origin);
+    int secondIndex = bone_vertices.size();
+    bone_vertices.push_back(currBone->endpoint);  
+
+    bone_lines.push_back(glm::uvec3(firstIndex, secondIndex, firstIndex));
+  }
 }
 
 void LoadBones(const std::string& file)
@@ -772,51 +780,51 @@ int main(int argc, char* argv[]) {
 
 
 
-  // // Switch to the skeleton VAO.
-  // CHECK_GL_ERROR(glBindVertexArray(array_objects[kSkeletonVao]));
+  // Switch to the skeleton VAO.
+  CHECK_GL_ERROR(glBindVertexArray(array_objects[kSkeletonVao]));
 
-  // // Generate buffer objects
-  // CHECK_GL_ERROR(glGenBuffers(kNumVbos, &buffer_objects[kSkeletonVao][0]));
+  // Generate buffer objects
+  CHECK_GL_ERROR(glGenBuffers(kNumVbos, &buffer_objects[kSkeletonVao][0]));
 
-  // // Setup vertex data in a VBO.
-  // CHECK_GL_ERROR(
-  //     glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kSkeletonVao][kVertexBuffer]));
-  // CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
-  //                             sizeof(float) * bone_vertices.size() * 4,
-  //                             &bone_vertices[0], GL_STATIC_DRAW));
-  // CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
-  // CHECK_GL_ERROR(glEnableVertexAttribArray(0));
+  // Setup vertex data in a VBO.
+  CHECK_GL_ERROR(
+      glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kSkeletonVao][kVertexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                              sizeof(float) * bone_vertices.size() * 4,
+                              &bone_vertices[0], GL_STATIC_DRAW));
+  CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
+  CHECK_GL_ERROR(glEnableVertexAttribArray(0));
 
-  // // Setup element array buffer.
-  // CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
-  //                             buffer_objects[kSkeletonVao][kIndexBuffer]));
-  // CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-  //                             sizeof(uint32_t) * bone_lines.size() * 3,
-  //                            &bone_lines[0], GL_STATIC_DRAW));
+  // Setup element array buffer.
+  CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+                              buffer_objects[kSkeletonVao][kIndexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                              sizeof(uint32_t) * bone_lines.size() * 3,
+                             &bone_lines[0], GL_STATIC_DRAW));
 
 
 
-  //   // Switch to the ogre VAO.
-  // CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
+    // Switch to the ogre VAO.
+  CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
 
-  // // Generate buffer objects
-  // CHECK_GL_ERROR(glGenBuffers(kNumVbos, &buffer_objects[kOgreVao][0]));
+  // Generate buffer objects
+  CHECK_GL_ERROR(glGenBuffers(kNumVbos, &buffer_objects[kOgreVao][0]));
 
-  // // Setup vertex data in a VBO.
-  // CHECK_GL_ERROR(
-  //     glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kOgreVao][kVertexBuffer]));
-  // CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
-  //                             sizeof(float) * ogre_vertices.size() * 4,
-  //                             &ogre_vertices[0], GL_STATIC_DRAW));
-  // CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
-  // CHECK_GL_ERROR(glEnableVertexAttribArray(0));
+  // Setup vertex data in a VBO.
+  CHECK_GL_ERROR(
+      glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kOgreVao][kVertexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                              sizeof(float) * ogre_vertices.size() * 4,
+                              &ogre_vertices[0], GL_STATIC_DRAW));
+  CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
+  CHECK_GL_ERROR(glEnableVertexAttribArray(0));
 
-  // // Setup element array buffer.
-  // CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
-  //                             buffer_objects[kOgreVao][kIndexBuffer]));
-  // CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-  //                             sizeof(uint32_t) * ogre_faces.size() * 3,
-  //                             &ogre_faces[0], GL_STATIC_DRAW));
+  // Setup element array buffer.
+  CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+                              buffer_objects[kOgreVao][kIndexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                              sizeof(uint32_t) * ogre_faces.size() * 3,
+                              &ogre_faces[0], GL_STATIC_DRAW));
 
 
 
@@ -928,45 +936,47 @@ int main(int argc, char* argv[]) {
                                   GL_UNSIGNED_INT, 0));
 
 
-    // // Bind to our floor VAO.
-    // CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
+    // Bind to our floor VAO.
+    CHECK_GL_ERROR(glBindVertexArray(array_objects[kSkeletonVao]));
 
-    // // Use our program.
-    // CHECK_GL_ERROR(glUseProgram(floor_program_id));
+    // Use our program.
+    CHECK_GL_ERROR(glUseProgram(floor_program_id));
 
-    // // Pass uniforms in.
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
-    //                                   GL_FALSE, &projection_matrix[0][0]));
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
-    //                                   &floor_model_matrix[0][0]));
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
-    //                                   &view_matrix[0][0]));
-    // CHECK_GL_ERROR(
-    //     glUniform4fv(floor_light_position_location, 1, &light_position[0]));
+    // Pass uniforms in.
+    CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
+                                      GL_FALSE, &projection_matrix[0][0]));
+    CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
+                                      &floor_model_matrix[0][0]));
+    CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
+                                      &view_matrix[0][0]));
+    CHECK_GL_ERROR(
+        glUniform4fv(floor_light_position_location, 1, &light_position[0]));
 
-    // // Draw our triangles.
-    // CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
-    //                               GL_UNSIGNED_INT, 0));
+    // Draw our triangles.
+    CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, bone_lines.size() * 3,
+                                  GL_UNSIGNED_INT, 0));
 
-    // // Bind to our floor VAO.
-    // CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
 
-    // // Use our program.
-    // CHECK_GL_ERROR(glUseProgram(floor_program_id));
 
-    // // Pass uniforms in.
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
-    //                                   GL_FALSE, &projection_matrix[0][0]));
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
-    //                                   &floor_model_matrix[0][0]));
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
-    //                                   &view_matrix[0][0]));
-    // CHECK_GL_ERROR(
-    //     glUniform4fv(floor_light_position_location, 1, &light_position[0]));
+    // Bind to our floor VAO.
+    CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
 
-    // // Draw our triangles.
-    // CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
-    //                               GL_UNSIGNED_INT, 0));
+    // Use our program.
+    CHECK_GL_ERROR(glUseProgram(floor_program_id));
+
+    // Pass uniforms in.
+    CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
+                                      GL_FALSE, &projection_matrix[0][0]));
+    CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
+                                      &floor_model_matrix[0][0]));
+    CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
+                                      &view_matrix[0][0]));
+    CHECK_GL_ERROR(
+        glUniform4fv(floor_light_position_location, 1, &light_position[0]));
+
+    // Draw our triangles.
+    CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
+                                  GL_UNSIGNED_INT, 0));
 
 
     // Poll and swap.
