@@ -334,11 +334,13 @@ void calculateEndpoints(Bone* currBone) {
     currBone->origin = glm::vec4(currBone->dx, currBone->dy, currBone->dz, 1.000000);
     currBone->endpoint = currBone->origin;
   } else if(currBone->parent == 0) {
-    currBone->origin = glm::transpose(coordMatrix(currBone, true)) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
-    currBone->endpoint = glm::transpose(coordMatrix(currBone, false)) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
+    //std::cout << coordMatrix(currBone, true) << "\n\n";
+    currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
+    currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
   } else {
-    currBone->origin = glm::transpose(coordMatrix(currBone, true)) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
-    currBone->endpoint = glm::transpose(coordMatrix(currBone, false)) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
+    //std::cout << coordMatrix(currBone, true) << "\n\n";
+    currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
+    currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
   }
   
 }
@@ -379,20 +381,59 @@ void LoadBones(const std::string& file)
         bone_vector[i].tangent = glm::normalize(bone_vector[i].tangent);
 
         // Translation matrix
-        bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, bone_vector[i].length),
+        // bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, bone_vector[i].length),
+        //        glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
+        //        glm::vec4(0.000000, 0.000000, 1.000000, 0.000000),
+        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+
+        bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, 0.000000),
                glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
                glm::vec4(0.000000, 0.000000, 1.000000, 0.000000),
+               glm::vec4(bone_vector[i].length, 0.000000, 0.000000, 1.000000));
+
+        // Calculate rotation matrix
+        std::vector<float> offset_coords;
+        offset_coords.push_back(std::abs(bone_vector[i].dx));
+        offset_coords.push_back(std::abs(bone_vector[i].dy));
+        offset_coords.push_back(std::abs(bone_vector[i].dz));
+        std::vector<float>::iterator result =  std::min_element(std::begin(offset_coords), std::end(offset_coords));
+        float mincoord = *result;
+        //std::cout << "Smallest offset coordinate: " << mincoord << "\n";
+        glm::vec3 offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));
+        glm::vec3 u;
+        if(mincoord == offset_coords[0]) {
+          u = glm::cross(offset_vector, glm::vec3(1.000000, 0.000000, 0.000000));
+        } else if(mincoord == offset_coords[1]) {
+          u = glm::cross(offset_vector, glm::vec3(0.000000, 1.000000, 0.000000));
+        } else if(mincoord == offset_coords[2]){
+          u = glm::cross(offset_vector, glm::vec3(0.000000, 0.000000, 1.000000));
+        } else {
+          std::cout << "ERROR: min coordinate is not in offset vector!\n";
+        }
+        u = glm::normalize(u);
+        glm::vec3 v = glm::normalize(glm::cross(u, offset_vector));
+        // bone_vector[i].rotation = glm::mat4(glm::vec4(u.x, offset_vector.x, v.x, 0.000000),
+        //        glm::vec4(u.y, offset_vector.y, v.y, 0.000000),
+        //        glm::vec4(u.z, offset_vector.z, v.z, 0.000000),
+        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+
+        bone_vector[i].rotation = glm::mat4(glm::vec4(u.x, u.y, u.z, 0.000000),
+               glm::vec4(offset_vector.x, offset_vector.y, offset_vector.z, 0.000000),
+               glm::vec4(v.x, v.y, v.z, 0.000000),
                glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
-
-
 
 
 
       } else if (bone_vector[i].parent == -1){
-        bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, bone_vector[i].dx),
-               glm::vec4(0.000000, 1.000000, 0.000000, bone_vector[i].dy),
-               glm::vec4(0.000000, 0.000000, 1.000000, bone_vector[i].dz),
-               glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+        // bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, bone_vector[i].dx),
+        //        glm::vec4(0.000000, 1.000000, 0.000000, bone_vector[i].dy),
+        //        glm::vec4(0.000000, 0.000000, 1.000000, bone_vector[i].dz),
+        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+
+        bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, 0.000000),
+               glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
+               glm::vec4(0.000000, 0.000000, 1.000000, 0.000000),
+               glm::vec4(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz, 1.000000));
 
 
         
@@ -427,9 +468,9 @@ void LoadBones(const std::string& file)
         // glm::vec3 normal = glm::normalize(glm::cross(tangent, v));
         // glm::vec3 binormal = glm::normalize(glm::cross(tangent, normal));
 
-        // bone_vector[i].rotation = glm::mat4(glm::vec4(tangent.x, normal.x, binormal.x, 0.000000),
-        //      glm::vec4(tangent.y, normal.y, binormal.y, 0.000000),
-        //      glm::vec4(tangent.z, normal.z, binormal.z, 0.000000),
+        // bone_vector[i].rotation = glm::mat4(glm::vec4(tangent.x, tangent.y, tangent.z, 0.000000),
+        //      glm::vec4(normal.x, normal.y, normal.z, 0.000000),
+        //      glm::vec4(binormal.x, binormal.y, binormal.z, 0.000000),
         //      glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
       }
 
@@ -437,31 +478,7 @@ void LoadBones(const std::string& file)
 
 
 
-      // Calculate rotation matrix
-      std::vector<float> offset_coords;
-      offset_coords.push_back(std::abs(bone_vector[i].dx));
-      offset_coords.push_back(std::abs(bone_vector[i].dy));
-      offset_coords.push_back(std::abs(bone_vector[i].dz));
-      std::vector<float>::iterator result =  std::min_element(std::begin(offset_coords), std::end(offset_coords));
-      float mincoord = *result;
-      //std::cout << "Smallest offset coordinate: " << mincoord << "\n";
-      glm::vec3 offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));
-      glm::vec3 u;
-      if(mincoord == offset_coords[0]) {
-        u = glm::cross(offset_vector, glm::vec3(1.000000, 0.000000, 0.000000));
-      } else if(mincoord == offset_coords[1]) {
-        u = glm::cross(offset_vector, glm::vec3(0.000000, 1.000000, 0.000000));
-      } else if(mincoord == offset_coords[2]){
-        u = glm::cross(offset_vector, glm::vec3(0.000000, 0.000000, 1.000000));
-      } else {
-        std::cout << "ERROR: min coordinate is not in offset vector!\n";
-      }
-      u = glm::normalize(u);
-      glm::vec3 v = glm::normalize(glm::cross(u, offset_vector));
-      bone_vector[i].rotation = glm::mat4(glm::vec4(u.x, offset_vector.x, v.x, 0.000000),
-             glm::vec4(u.y, offset_vector.y, v.y, 0.000000),
-             glm::vec4(u.z, offset_vector.z, v.z, 0.000000),
-             glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+
 
 
 
