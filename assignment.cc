@@ -69,6 +69,8 @@ std::vector<glm::uvec2> cylinder_lines;
 
 bool drawCylinder = false;
 int currHighlightedBone = -5;
+
+std::vector <std::vector<double> > weights(22, std::vector<double>(29960, 1));
 // end new code
 
 int window_width = 800, window_height = 600;
@@ -415,6 +417,24 @@ void LoadObj(const std::string& file, std::vector<glm::vec4>& vertices,
     }
   }
   in.close();
+}
+
+void LoadWeights(const std::string& file, std::vector<std::vector<double>>& weights)
+{
+    std::ifstream in(file);
+    int bone_num, bone_verts;
+    double blending_weight;
+    in >> bone_num >> bone_verts;
+    std::cout << "number of bones: " << bone_num << "\n";
+    std::cout << "number of vertices per bone " << bone_verts << "\n";
+    for (int i = 0; i < 22; i++)
+    {
+      for (int j = 0; j < 29960; j++)
+      {
+        in >> blending_weight;
+        weights[i][j] = blending_weight;
+      }
+    }
 }
 
 glm::mat4 coordMatrix(Bone* currBone, bool origin) {
@@ -1198,6 +1218,9 @@ int main(int argc, char* argv[]) {
   // Setup the object array object.
   LoadObj("ogre-rigged/ogre.obj", ogre_vertices, ogre_faces);
   LoadBones("ogre-rigged/ogre-skeleton.bf");
+  LoadWeights("ogre-rigged/ogre-weights.dmat", weights);
+
+  std::cout  << "bone[0][2] blending weight = " << weights[0][2] << "\n";
 
   // Setup our VAOs.
   CHECK_GL_ERROR(glGenVertexArrays(kNumVaos, array_objects));
