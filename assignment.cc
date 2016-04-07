@@ -37,8 +37,9 @@ struct Bone
   float dy;
   float dz;
   float length;
-  glm::vec4 tangent;
-  glm::vec4 normal;
+  glm::vec3 tangent;
+  glm::vec3 normal;
+  glm::vec3 binormal;
   glm::mat4 translation;
   glm::mat4 rotation;
   glm::vec4 origin;
@@ -51,7 +52,7 @@ std::vector<glm::vec4> ogre_vertices;
 std::vector<glm::uvec3> ogre_faces;
 
 std::vector<glm::vec4> bone_vertices;
-std::vector<glm::uvec3> bone_lines;
+std::vector<glm::uvec2> bone_lines;
 // end new code
 
 int window_width = 800, window_height = 600;
@@ -102,12 +103,12 @@ GLuint buffer_objects[kNumVaos][kNumVbos];  // These will store VBO descriptors.
 float last_x = 0.0f, last_y = 0.0f, current_x = 0.0f, current_y = 0.0f;
 bool drag_state = false;
 int current_button = -1;
-float camera_distance = 2.0;
+float camera_distance = 0.7;
 float pan_speed = 0.1f;
 float roll_speed = 0.1f;
 float rotation_speed = 0.05f;
 float zoom_speed = 0.1f;
-glm::vec3 eye = glm::vec3(0.0f, 0.1f, camera_distance);
+glm::vec3 eye = glm::vec3(0.0f, 0.0f, camera_distance);
 glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
 glm::vec3 look = glm::vec3(0.0f, 0.0f, 1.0f);
 glm::vec3 tangent = glm::cross(up, look);
@@ -177,6 +178,46 @@ const char* floor_fragment_shader =
     "color = clamp(dot_nl * color, 0.0, 1.0);"
     "fragment_color = vec4(color, 1.0);"
     "}";
+
+
+const char* skeleton_vertex_shader =
+    "#version 330 core\n"
+    "in vec4 vertex_position;"
+    "void main() {"
+    "gl_Position = vertex_position;"
+    "}";
+
+const char* skeleton_geometry_shader =
+    "#version 330 core\n"
+    "layout (lines) in;"
+    "layout (line_strip, max_vertices = 2) out;"
+    "uniform mat4 projection;"
+    "uniform mat4 model;"
+    "uniform mat4 view;"
+    "out vec4 world_position;"
+    "void main() {"
+    "int n = 0;"
+    "vec3 a = gl_in[0].gl_Position.xyz;"
+    "vec3 b = gl_in[1].gl_Position.xyz;"
+    "for (n = 0; n < gl_in.length(); n++) {"
+    "world_position = gl_in[n].gl_Position;"
+    "gl_Position = projection * view * model * gl_in[n].gl_Position;"
+    "EmitVertex();"
+    "}"
+    "EndPrimitive();"
+    "}";
+
+const char* skeleton_fragment_shader =
+    "#version 330 core\n"
+    "in vec4 face_normal;"
+    "in vec4 light_direction;"
+    "in vec4 world_position;"
+    "out vec4 fragment_color;"
+    "void main() {"
+    "vec4 pos = world_position;"
+    "fragment_color = vec4(0.0, 0.0, 1.0, 1.0);"
+    "}";
+
 
 const char* OpenGlErrorToString(GLenum error) {
   switch (error) {
@@ -313,7 +354,7 @@ void LoadObj(const std::string& file, std::vector<glm::vec4>& vertices,
 }
 
 glm::mat4 coordMatrix(Bone* currBone, bool origin) {
-  if(currBone->parent <= 0) {
+  if(currBone->parent == 0) {
     if(origin)
       return currBone->translation;
     else
@@ -327,30 +368,32 @@ glm::mat4 coordMatrix(Bone* currBone, bool origin) {
 }
 
 void calculateEndpoints(Bone* currBone) {
-  //glm::mat4 coordMatrix = coordMatrix(currBone);
-  //std::cout << glm::transpose(coordMatrix(currBone)) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000) << "\n";
   
   if(currBone->parent == -1) {
     currBone->origin = glm::vec4(currBone->dx, currBone->dy, currBone->dz, 1.000000);
     currBone->endpoint = currBone->origin;
-  } else if(currBone->parent == 0) {
-    //std::cout << coordMatrix(currBone, true) << "\n\n";
-    currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
-    currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
   } else {
-    //std::cout << coordMatrix(currBone, true) << "\n\n";
+    std::cout << coordMatrix(currBone, true) << "\n\n";
     currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
-    currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(0.000000, 0.000000, currBone->length, 1.000000);
+    currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(currBone->length, 0.000000, 0.000000, 1.000000);
   }
 
-  if(currBone->parent != -1) {
+  //if(currBone->parent == 0) {
     int firstIndex = bone_vertices.size();
     bone_vertices.push_back(currBone->origin);
     int secondIndex = bone_vertices.size();
     bone_vertices.push_back(currBone->endpoint);  
 
-    bone_lines.push_back(glm::uvec3(firstIndex, secondIndex, firstIndex));
-  }
+    bone_lines.push_back(glm::uvec2(firstIndex, secondIndex));
+  //}
+}
+
+glm::mat4 calculateRotation(Bone* currBone) {
+    glm::mat4 tnb = glm::mat4(glm::vec4(currBone->tangent.x, currBone->tangent.y, currBone->tangent.z, 0.000000),
+               glm::vec4(currBone->normal.x, currBone->normal.y, currBone->normal.z, 0.000000),
+               glm::vec4(currBone->binormal.x, currBone->binormal.y, currBone->binormal.z, 0.000000),
+               glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+    return glm::inverse(tnb);
 }
 
 void LoadBones(const std::string& file)
@@ -380,63 +423,52 @@ void LoadBones(const std::string& file)
 
     for(int i = 0; i < bone_vector.size(); i++)
     {
-      if(bone_vector[i].parent > 0)
+      if(bone_vector[i].parent > -1)
       {
         glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
         glm::vec3 parent_point = glm::vec3(bone_vector[bone_vector[i].parent].dx, bone_vector[bone_vector[i].parent].dy, bone_vector[bone_vector[i].parent].dz);
-        bone_vector[i].tangent = glm::vec4(parent_point - bone_point, 0.000000);
+        bone_vector[i].tangent = glm::vec3(bone_point);
         bone_vector[i].length = glm::length(bone_vector[i].tangent);
         bone_vector[i].tangent = glm::normalize(bone_vector[i].tangent);
-
-        // Translation matrix
-        // bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, bone_vector[i].length),
-        //        glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
-        //        glm::vec4(0.000000, 0.000000, 1.000000, 0.000000),
-        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
 
         bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, 0.000000),
                glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
                glm::vec4(0.000000, 0.000000, 1.000000, 0.000000),
-               glm::vec4(bone_vector[i].length, 0.000000, 0.000000, 1.000000));
+               glm::vec4(bone_vector[bone_vector[i].parent].length, 0.000000, 0.000000, 1.000000));
 
-        // Calculate rotation matrix
+
+
+        glm::vec3 v = bone_vector[i].tangent;
+
+
         std::vector<float> offset_coords;
-        offset_coords.push_back(std::abs(bone_vector[i].dx));
-        offset_coords.push_back(std::abs(bone_vector[i].dy));
-        offset_coords.push_back(std::abs(bone_vector[i].dz));
+        offset_coords.push_back(v.x);
+        offset_coords.push_back(v.y);
+        offset_coords.push_back(v.z);
         std::vector<float>::iterator result =  std::min_element(std::begin(offset_coords), std::end(offset_coords));
         float mincoord = *result;
-        //std::cout << "Smallest offset coordinate: " << mincoord << "\n";
-        glm::vec3 offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));
-        glm::vec3 u;
+
         if(mincoord == offset_coords[0]) {
-          u = glm::cross(offset_vector, glm::vec3(1.000000, 0.000000, 0.000000));
+          v = glm::vec3(1.000000, 0.000000, 0.000000);
         } else if(mincoord == offset_coords[1]) {
-          u = glm::cross(offset_vector, glm::vec3(0.000000, 1.000000, 0.000000));
+          v = glm::vec3(0.000000, 1.000000, 0.000000);
         } else if(mincoord == offset_coords[2]){
-          u = glm::cross(offset_vector, glm::vec3(0.000000, 0.000000, 1.000000));
-        } else {
-          std::cout << "ERROR: min coordinate is not in offset vector!\n";
+          v = glm::vec3(0.000000, 0.000000, 1.000000);
         }
-        u = glm::normalize(u);
-        glm::vec3 v = glm::normalize(glm::cross(u, offset_vector));
-        // bone_vector[i].rotation = glm::mat4(glm::vec4(u.x, offset_vector.x, v.x, 0.000000),
-        //        glm::vec4(u.y, offset_vector.y, v.y, 0.000000),
-        //        glm::vec4(u.z, offset_vector.z, v.z, 0.000000),
-        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+        glm::vec3 normal = glm::normalize(glm::cross(bone_vector[i].tangent, v));
+        glm::vec3 binormal = glm::normalize(glm::cross(bone_vector[i].tangent, normal));
 
-        bone_vector[i].rotation = glm::mat4(glm::vec4(u.x, u.y, u.z, 0.000000),
-               glm::vec4(offset_vector.x, offset_vector.y, offset_vector.z, 0.000000),
-               glm::vec4(v.x, v.y, v.z, 0.000000),
-               glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+        bone_vector[i].rotation = glm::mat4(glm::vec4(bone_vector[i].tangent.x, bone_vector[i].tangent.y, bone_vector[i].tangent.z, 0.000000),
+             glm::vec4(normal.x, normal.y, normal.z, 0.000000),
+             glm::vec4(binormal.x, binormal.y, binormal.z, 0.000000),
+             glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
 
+
+        bone_vector[i].normal = normal;
+        bone_vector[i].binormal = binormal;
 
 
       } else if (bone_vector[i].parent == -1){
-        // bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, bone_vector[i].dx),
-        //        glm::vec4(0.000000, 1.000000, 0.000000, bone_vector[i].dy),
-        //        glm::vec4(0.000000, 0.000000, 1.000000, bone_vector[i].dz),
-        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
 
         bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, 0.000000),
                glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
@@ -444,52 +476,88 @@ void LoadBones(const std::string& file)
                glm::vec4(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz, 1.000000));
 
 
+        bone_vector[i].rotation = glm::mat4();
+
+        bone_vector[i].tangent = glm::vec3(1,0,0);
+        bone_vector[i].normal = glm::vec3(0,1,0);
+        bone_vector[i].binormal = glm::vec3(0,0,1);
+
+      }
+      // } else {
+      //   glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
+      //   glm::vec3 parent_point = glm::vec3(bone_vector[bone_vector[i].parent].dx, bone_vector[bone_vector[i].parent].dy, bone_vector[bone_vector[i].parent].dz);
+      //   bone_vector[i].tangent = glm::vec3(bone_point - parent_point);
+      //   bone_vector[i].length = glm::length(bone_vector[i].tangent);
+      //   bone_vector[i].tangent = glm::normalize(bone_point);
+
         
+      //   bone_vector[i].translation = bone_vector[0].translation;
 
 
 
-      } else {
-        glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
-        glm::vec3 parent_point = glm::vec3(bone_vector[bone_vector[i].parent].dx, bone_vector[bone_vector[i].parent].dy, bone_vector[bone_vector[i].parent].dz);
-        bone_vector[i].tangent = glm::vec4(parent_point - bone_point, 0.000000);
-        bone_vector[i].length = glm::length(bone_vector[i].tangent);
-        
-        bone_vector[i].translation = bone_vector[0].translation;
 
-        // glm::vec3 tangent = glm::normalize(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));
-        // glm::vec3 v = tangent;
 
+      // }
+
+
+       
+
+
+
+
+
+
+
+        // // Calculate rotation matrix
         // std::vector<float> offset_coords;
-        // offset_coords.push_back(std::abs(v.x));
-        // offset_coords.push_back(std::abs(v.y));
-        // offset_coords.push_back(std::abs(v.z));
+        // if(bone_vector[i].parent <= 0) {
+        //   offset_coords.push_back(std::abs(bone_vector[i].dx));
+        //   offset_coords.push_back(std::abs(bone_vector[i].dy));
+        //   offset_coords.push_back(std::abs(bone_vector[i].dz));
+        // } else {
+        //   offset_coords.push_back(std::abs(bone_vector[i].dx - bone_vector[bone_vector[i].parent].dx));
+        //   offset_coords.push_back(std::abs(bone_vector[i].dy - bone_vector[bone_vector[i].parent].dy));
+        //   offset_coords.push_back(std::abs(bone_vector[i].dz - bone_vector[bone_vector[i].parent].dz));
+        // }
         // std::vector<float>::iterator result =  std::min_element(std::begin(offset_coords), std::end(offset_coords));
         // float mincoord = *result;
-
-        // if(mincoord == offset_coords[0]) {
-        //   v = glm::vec3(1.000000, 0.000000, 0.000000);
-        // } else if(mincoord == offset_coords[1]) {
-        //   v = glm::vec3(0.000000, 1.000000, 0.000000);
-        // } else if(mincoord == offset_coords[2]){
-        //   v = glm::vec3(0.000000, 0.000000, 1.000000);
+        // //std::cout << "Smallest offset coordinate: " << mincoord << "\n";
+        // glm::vec3 offset_vector;
+        // if(bone_vector[i].parent <= 0) {
+        //   offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));      
+        // } else {
+        //   offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx - bone_vector[bone_vector[i].parent].dx, bone_vector[i].dy - bone_vector[bone_vector[i].parent].dy, bone_vector[i].dz - bone_vector[bone_vector[i].parent].dz));
         // }
-        // glm::vec3 normal = glm::normalize(glm::cross(tangent, v));
-        // glm::vec3 binormal = glm::normalize(glm::cross(tangent, normal));
+        // glm::vec3 u;
+        // if(mincoord == offset_coords[0]) {
+        //   u = glm::cross(offset_vector, glm::vec3(1.000000, 0.000000, 0.000000));
+        // } else if(mincoord == offset_coords[1]) {
+        //   u = glm::cross(offset_vector, glm::vec3(0.000000, 1.000000, 0.000000));
+        // } else if(mincoord == offset_coords[2]){
+        //   u = glm::cross(offset_vector, glm::vec3(0.000000, 0.000000, 1.000000));
+        // } else {
+        //   std::cout << "ERROR: min coordinate is not in offset vector!\n";
+        // }
+        // u = glm::normalize(u);
+        // glm::vec3 v = glm::normalize(glm::cross(offset_vector, u));
 
-        // bone_vector[i].rotation = glm::mat4(glm::vec4(tangent.x, tangent.y, tangent.z, 0.000000),
-        //      glm::vec4(normal.x, normal.y, normal.z, 0.000000),
-        //      glm::vec4(binormal.x, binormal.y, binormal.z, 0.000000),
-        //      glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
-      }
+        // bone_vector[i].rotation = glm::mat4(glm::vec4(offset_vector.x, offset_vector.y, offset_vector.z, 0.000000),
+        //        glm::vec4(u.x, u.y, u.z, 0.000000),
+        //        glm::vec4(v.x, v.y, v.z, 0.000000),
+        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
 
+        // bone_vector[i].tangent = offset_vector;
+        // bone_vector[i].normal = u;
+        // bone_vector[i].binormal = v;
 
+        if(bone_vector[i].parent >= 0) {
+          bone_vector[i].rotation = calculateRotation(&bone_vector[bone_vector[i].parent]) * bone_vector[i].rotation;
+        }
 
+        //if(i < 10)
+          //std::cout << "bone_vector[" << i << "] rotation is: \n" << bone_vector[i].rotation << "\n\n";
 
-
-
-
-
-
+      //if(bone_vector[i].parent == 0) {
       std::cout << "bone_vector[" << i << "] length is " << bone_vector[i].length << "\n";
 
       std::cout << "Translation matrix: " << bone_vector[i].translation << "\n\n";
@@ -501,6 +569,7 @@ void LoadBones(const std::string& file)
       std::cout << "bone_vector[" << i << "] endpoint is " << bone_vector[i].endpoint << "\n";
       std::cout << "SANITY CHECK: length between endpoint and origin is: " << glm::length(bone_vector[i].endpoint - bone_vector[i].origin) << "\n";
       std::cout << "\n";
+      //}
     }
 
 }
@@ -795,11 +864,13 @@ int main(int argc, char* argv[]) {
   CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
   CHECK_GL_ERROR(glEnableVertexAttribArray(0));
 
+  std::cout << "bone_lines.size: " << bone_lines.size() << std::endl;
+
   // Setup element array buffer.
   CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
                               buffer_objects[kSkeletonVao][kIndexBuffer]));
   CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-                              sizeof(uint32_t) * bone_lines.size() * 3,
+                              sizeof(uint32_t) * bone_lines.size() * 2,
                              &bone_lines[0], GL_STATIC_DRAW));
 
 
@@ -887,6 +958,60 @@ int main(int argc, char* argv[]) {
 
   glm::vec4 light_position = glm::vec4(0.0f, 100.0f, 0.0f, 1.0f);
 
+
+
+  // Setup skeleton vertex shader.
+  GLuint skel_vertex_shader_id = 0;
+  const char* skel_vertex_source_pointer = skeleton_vertex_shader;
+  CHECK_GL_ERROR(skel_vertex_shader_id = glCreateShader(GL_VERTEX_SHADER));
+  CHECK_GL_ERROR(
+      glShaderSource(skel_vertex_shader_id, 1, &skel_vertex_source_pointer, nullptr));
+  glCompileShader(skel_vertex_shader_id);
+  CHECK_GL_SHADER_ERROR(skel_vertex_shader_id);
+
+  // Setup skeleton geometry shader.
+  GLuint skel_geometry_shader_id = 0;
+  const char* skel_geometry_source_pointer = skeleton_geometry_shader;
+  CHECK_GL_ERROR(skel_geometry_shader_id = glCreateShader(GL_GEOMETRY_SHADER));
+  CHECK_GL_ERROR(
+      glShaderSource(skel_geometry_shader_id, 1, &skel_geometry_source_pointer, nullptr));
+  glCompileShader(skel_geometry_shader_id);
+  CHECK_GL_SHADER_ERROR(skel_geometry_shader_id);
+
+  // Setup skeleton fragment shader.
+  GLuint skeleton_fragment_shader_id = 0;
+  const char* skeleton_fragment_source_pointer = skeleton_fragment_shader;
+  CHECK_GL_ERROR(skeleton_fragment_shader_id = glCreateShader(GL_FRAGMENT_SHADER));
+  CHECK_GL_ERROR(glShaderSource(skeleton_fragment_shader_id, 1,
+                                &skeleton_fragment_source_pointer, nullptr));
+  glCompileShader(skeleton_fragment_shader_id);
+  CHECK_GL_SHADER_ERROR(skeleton_fragment_shader_id);
+
+  // Let's create our skeleton program.
+  GLuint skeleton_program_id = 0;
+  CHECK_GL_ERROR(skeleton_program_id = glCreateProgram());
+  CHECK_GL_ERROR(glAttachShader(skeleton_program_id, skel_vertex_shader_id));
+  CHECK_GL_ERROR(glAttachShader(skeleton_program_id, skeleton_fragment_shader_id));
+  CHECK_GL_ERROR(glAttachShader(skeleton_program_id, skel_geometry_shader_id));
+
+  // Bind attributes.
+  CHECK_GL_ERROR(glBindAttribLocation(skeleton_program_id, 0, "vertex_position"));
+  CHECK_GL_ERROR(glBindFragDataLocation(skeleton_program_id, 0, "fragment_color"));
+  glLinkProgram(skeleton_program_id);
+  CHECK_GL_PROGRAM_ERROR(skeleton_program_id);
+
+  // Get the uniform locations.
+  GLint skeleton_projection_matrix_location = 0;
+  CHECK_GL_ERROR(skeleton_projection_matrix_location =
+                     glGetUniformLocation(skeleton_program_id, "projection"));
+  GLint skeleton_model_matrix_location = 0;
+  CHECK_GL_ERROR(skeleton_model_matrix_location =
+                     glGetUniformLocation(skeleton_program_id, "model"));
+  GLint skeleton_view_matrix_location = 0;
+  CHECK_GL_ERROR(skeleton_view_matrix_location =
+                     glGetUniformLocation(skeleton_program_id, "view"));
+
+
   while (!glfwWindowShouldClose(window)) {
     // Setup some basic window stuff.
     glfwGetFramebufferSize(window, &window_width, &window_height);
@@ -940,43 +1065,41 @@ int main(int argc, char* argv[]) {
     CHECK_GL_ERROR(glBindVertexArray(array_objects[kSkeletonVao]));
 
     // Use our program.
-    CHECK_GL_ERROR(glUseProgram(floor_program_id));
+    CHECK_GL_ERROR(glUseProgram(skeleton_program_id));
 
     // Pass uniforms in.
-    CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
+    CHECK_GL_ERROR(glUniformMatrix4fv(skeleton_projection_matrix_location, 1,
                                       GL_FALSE, &projection_matrix[0][0]));
-    CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
+    CHECK_GL_ERROR(glUniformMatrix4fv(skeleton_model_matrix_location, 1, GL_FALSE,
                                       &floor_model_matrix[0][0]));
-    CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
+    CHECK_GL_ERROR(glUniformMatrix4fv(skeleton_view_matrix_location, 1, GL_FALSE,
                                       &view_matrix[0][0]));
-    CHECK_GL_ERROR(
-        glUniform4fv(floor_light_position_location, 1, &light_position[0]));
 
     // Draw our triangles.
-    CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, bone_lines.size() * 3,
+    CHECK_GL_ERROR(glDrawElements(GL_LINES, bone_lines.size() * 2,
                                   GL_UNSIGNED_INT, 0));
 
 
 
-    // Bind to our floor VAO.
-    CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
+    // // Bind to our floor VAO.
+    // CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
 
-    // Use our program.
-    CHECK_GL_ERROR(glUseProgram(floor_program_id));
+    // // Use our program.
+    // CHECK_GL_ERROR(glUseProgram(floor_program_id));
 
-    // Pass uniforms in.
-    CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
-                                      GL_FALSE, &projection_matrix[0][0]));
-    CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
-                                      &floor_model_matrix[0][0]));
-    CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
-                                      &view_matrix[0][0]));
-    CHECK_GL_ERROR(
-        glUniform4fv(floor_light_position_location, 1, &light_position[0]));
+    // // Pass uniforms in.
+    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
+    //                                   GL_FALSE, &projection_matrix[0][0]));
+    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
+    //                                   &floor_model_matrix[0][0]));
+    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
+    //                                   &view_matrix[0][0]));
+    // CHECK_GL_ERROR(
+    //     glUniform4fv(floor_light_position_location, 1, &light_position[0]));
 
-    // Draw our triangles.
-    CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
-                                  GL_UNSIGNED_INT, 0));
+    // // Draw our triangles.
+    // CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
+    //                               GL_UNSIGNED_INT, 0));
 
 
     // Poll and swap.
