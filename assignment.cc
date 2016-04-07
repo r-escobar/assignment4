@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <GL/glew.h>
+#include <GL/freeglut.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_access.hpp>
@@ -53,6 +54,12 @@ std::vector<glm::uvec3> ogre_faces;
 
 std::vector<glm::vec4> bone_vertices;
 std::vector<glm::uvec2> bone_lines;
+
+std::vector<glm::vec4> cylinder_vertices;
+std::vector<glm::uvec2> cylinder_lines;
+
+
+bool drawCylinder = false;
 // end new code
 
 int window_width = 800, window_height = 600;
@@ -94,6 +101,7 @@ enum {
   kFloorVao,
   kOgreVao,
   kSkeletonVao,
+  kCylinderVao,
   kNumVaos
 };
 
@@ -216,6 +224,44 @@ const char* skeleton_fragment_shader =
     "void main() {"
     "vec4 pos = world_position;"
     "fragment_color = vec4(0.0, 0.0, 1.0, 1.0);"
+    "}";
+
+const char* cylinder_vertex_shader =
+    "#version 330 core\n"
+    "in vec4 vertex_position;"
+    "void main() {"
+    "gl_Position = vertex_position;"
+    "}";
+
+const char* cylinder_geometry_shader =
+    "#version 330 core\n"
+    "layout (lines) in;"
+    "layout (line_strip, max_vertices = 2) out;"
+    "uniform mat4 projection;"
+    "uniform mat4 model;"
+    "uniform mat4 view;"
+    "out vec4 world_position;"
+    "void main() {"
+    "int n = 0;"
+    "vec3 a = gl_in[0].gl_Position.xyz;"
+    "vec3 b = gl_in[1].gl_Position.xyz;"
+    "for (n = 0; n < gl_in.length(); n++) {"
+    "world_position = gl_in[n].gl_Position;"
+    "gl_Position = projection * view * model * gl_in[n].gl_Position;"
+    "EmitVertex();"
+    "}"
+    "EndPrimitive();"
+    "}";
+
+const char* cylinder_fragment_shader =
+    "#version 330 core\n"
+    "in vec4 face_normal;"
+    "in vec4 light_direction;"
+    "in vec4 world_position;"
+    "out vec4 fragment_color;"
+    "void main() {"
+    "vec4 pos = world_position;"
+    "fragment_color = vec4(1.0, 0.0, 0.0, 1.0);"
     "}";
 
 
@@ -354,7 +400,7 @@ void LoadObj(const std::string& file, std::vector<glm::vec4>& vertices,
 }
 
 glm::mat4 coordMatrix(Bone* currBone, bool origin) {
-  if(currBone->parent == 0) {
+  if(currBone->parent  < 0) {
     if(origin)
       return currBone->translation;
     else
@@ -373,19 +419,19 @@ void calculateEndpoints(Bone* currBone) {
     currBone->origin = glm::vec4(currBone->dx, currBone->dy, currBone->dz, 1.000000);
     currBone->endpoint = currBone->origin;
   } else {
-    std::cout << coordMatrix(currBone, true) << "\n\n";
+    //std::cout << coordMatrix(currBone, true) << "\n\n";
     currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
     currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(currBone->length, 0.000000, 0.000000, 1.000000);
   }
 
-  //if(currBone->parent == 0) {
+
     int firstIndex = bone_vertices.size();
     bone_vertices.push_back(currBone->origin);
     int secondIndex = bone_vertices.size();
     bone_vertices.push_back(currBone->endpoint);  
 
     bone_lines.push_back(glm::uvec2(firstIndex, secondIndex));
-  //}
+
 }
 
 glm::mat4 calculateRotation(Bone* currBone) {
@@ -426,7 +472,6 @@ void LoadBones(const std::string& file)
       if(bone_vector[i].parent > -1)
       {
         glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
-        glm::vec3 parent_point = glm::vec3(bone_vector[bone_vector[i].parent].dx, bone_vector[bone_vector[i].parent].dy, bone_vector[bone_vector[i].parent].dz);
         bone_vector[i].tangent = glm::vec3(bone_point);
         bone_vector[i].length = glm::length(bone_vector[i].tangent);
         bone_vector[i].tangent = glm::normalize(bone_vector[i].tangent);
@@ -477,98 +522,77 @@ void LoadBones(const std::string& file)
 
 
         bone_vector[i].rotation = glm::mat4();
-
+        //bone_vector[i].length = glm::length(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));
         bone_vector[i].tangent = glm::vec3(1,0,0);
         bone_vector[i].normal = glm::vec3(0,1,0);
         bone_vector[i].binormal = glm::vec3(0,0,1);
 
-      }
-      // } else {
-      //   glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
-      //   glm::vec3 parent_point = glm::vec3(bone_vector[bone_vector[i].parent].dx, bone_vector[bone_vector[i].parent].dy, bone_vector[bone_vector[i].parent].dz);
-      //   bone_vector[i].tangent = glm::vec3(bone_point - parent_point);
-      //   bone_vector[i].length = glm::length(bone_vector[i].tangent);
-      //   bone_vector[i].tangent = glm::normalize(bone_point);
 
-        
-      //   bone_vector[i].translation = bone_vector[0].translation;
+        // glm::vec3 bone_point = glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz);
+        // bone_vector[i].tangent = glm::vec3(bone_point);
+        // bone_vector[i].length = glm::length(bone_vector[i].tangent);
+        // bone_vector[i].tangent = glm::normalize(bone_vector[i].tangent);
 
-
+        // bone_vector[i].translation = glm::mat4(glm::vec4(1.000000, 0.000000, 0.000000, 0.000000),
+        //        glm::vec4(0.000000, 1.000000, 0.000000, 0.000000),
+        //        glm::vec4(0.000000, 0.000000, 1.000000, 0.000000),
+        //        glm::vec4(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz, 1.000000));
 
 
 
-      // }
+        // glm::vec3 v = bone_vector[i].tangent;
 
 
-       
-
-
-
-
-
-
-
-        // // Calculate rotation matrix
         // std::vector<float> offset_coords;
-        // if(bone_vector[i].parent <= 0) {
-        //   offset_coords.push_back(std::abs(bone_vector[i].dx));
-        //   offset_coords.push_back(std::abs(bone_vector[i].dy));
-        //   offset_coords.push_back(std::abs(bone_vector[i].dz));
-        // } else {
-        //   offset_coords.push_back(std::abs(bone_vector[i].dx - bone_vector[bone_vector[i].parent].dx));
-        //   offset_coords.push_back(std::abs(bone_vector[i].dy - bone_vector[bone_vector[i].parent].dy));
-        //   offset_coords.push_back(std::abs(bone_vector[i].dz - bone_vector[bone_vector[i].parent].dz));
-        // }
+        // offset_coords.push_back(v.x);
+        // offset_coords.push_back(v.y);
+        // offset_coords.push_back(v.z);
         // std::vector<float>::iterator result =  std::min_element(std::begin(offset_coords), std::end(offset_coords));
         // float mincoord = *result;
-        // //std::cout << "Smallest offset coordinate: " << mincoord << "\n";
-        // glm::vec3 offset_vector;
-        // if(bone_vector[i].parent <= 0) {
-        //   offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx, bone_vector[i].dy, bone_vector[i].dz));      
-        // } else {
-        //   offset_vector = glm::normalize(glm::vec3(bone_vector[i].dx - bone_vector[bone_vector[i].parent].dx, bone_vector[i].dy - bone_vector[bone_vector[i].parent].dy, bone_vector[i].dz - bone_vector[bone_vector[i].parent].dz));
-        // }
-        // glm::vec3 u;
+
         // if(mincoord == offset_coords[0]) {
-        //   u = glm::cross(offset_vector, glm::vec3(1.000000, 0.000000, 0.000000));
+        //   v = glm::vec3(1.000000, 0.000000, 0.000000);
         // } else if(mincoord == offset_coords[1]) {
-        //   u = glm::cross(offset_vector, glm::vec3(0.000000, 1.000000, 0.000000));
+        //   v = glm::vec3(0.000000, 1.000000, 0.000000);
         // } else if(mincoord == offset_coords[2]){
-        //   u = glm::cross(offset_vector, glm::vec3(0.000000, 0.000000, 1.000000));
-        // } else {
-        //   std::cout << "ERROR: min coordinate is not in offset vector!\n";
+        //   v = glm::vec3(0.000000, 0.000000, 1.000000);
         // }
-        // u = glm::normalize(u);
-        // glm::vec3 v = glm::normalize(glm::cross(offset_vector, u));
+        // glm::vec3 normal = glm::normalize(glm::cross(bone_vector[i].tangent, v));
+        // glm::vec3 binormal = glm::normalize(glm::cross(bone_vector[i].tangent, normal));
 
-        // bone_vector[i].rotation = glm::mat4(glm::vec4(offset_vector.x, offset_vector.y, offset_vector.z, 0.000000),
-        //        glm::vec4(u.x, u.y, u.z, 0.000000),
-        //        glm::vec4(v.x, v.y, v.z, 0.000000),
-        //        glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
+        // bone_vector[i].rotation = glm::mat4(glm::vec4(bone_vector[i].tangent.x, bone_vector[i].tangent.y, bone_vector[i].tangent.z, 0.000000),
+        //      glm::vec4(normal.x, normal.y, normal.z, 0.000000),
+        //      glm::vec4(binormal.x, binormal.y, binormal.z, 0.000000),
+        //      glm::vec4(0.000000, 0.000000, 0.000000, 1.000000));
 
-        // bone_vector[i].tangent = offset_vector;
-        // bone_vector[i].normal = u;
-        // bone_vector[i].binormal = v;
+
+        // bone_vector[i].normal = normal;
+        // bone_vector[i].binormal = binormal;
+
+      }
+
+
+
 
         if(bone_vector[i].parent >= 0) {
           bone_vector[i].rotation = calculateRotation(&bone_vector[bone_vector[i].parent]) * bone_vector[i].rotation;
         }
 
-        //if(i < 10)
-          //std::cout << "bone_vector[" << i << "] rotation is: \n" << bone_vector[i].rotation << "\n\n";
+      //std::cout << "bone_vector[" << i << "] length is " << bone_vector[i].length << "\n";
 
-      //if(bone_vector[i].parent == 0) {
-      std::cout << "bone_vector[" << i << "] length is " << bone_vector[i].length << "\n";
-
-      std::cout << "Translation matrix: " << bone_vector[i].translation << "\n\n";
-      std::cout << "Rotation matrix: " << bone_vector[i].rotation << "\n\n";    
+      //std::cout << "Translation matrix: " << bone_vector[i].translation << "\n\n";
+      //std::cout << "Rotation matrix: " << bone_vector[i].rotation << "\n\n";    
 
 
       calculateEndpoints(&bone_vector[i]);
+
+      if(i == 1) {
       std::cout << "bone_vector[" << i << "] origin is " << bone_vector[i].origin << "\n";
       std::cout << "bone_vector[" << i << "] endpoint is " << bone_vector[i].endpoint << "\n";
-      std::cout << "SANITY CHECK: length between endpoint and origin is: " << glm::length(bone_vector[i].endpoint - bone_vector[i].origin) << "\n";
-      std::cout << "\n";
+      }
+
+      //std::cout << "SANITY CHECK: length between endpoint and origin is: " << glm::length(bone_vector[i].endpoint - bone_vector[i].origin) << "\n";
+      //std::cout << "\n";
       //}
     }
 
@@ -725,6 +749,114 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action,
   }
 }
 
+float timeToClosestPoint(glm::vec3 eye_ray, glm::vec3 bone_ray, glm::vec3 bone_origin, bool getBoneRayTime) {
+
+  glm::vec3 w_zero = eye - bone_origin;
+
+  float a = glm::dot(eye_ray, eye_ray);
+  float b = glm::dot(eye_ray, bone_ray);
+  float c = glm::dot(bone_ray, bone_ray);
+  float d = glm::dot(eye_ray, w_zero); 
+  float e = glm::dot(bone_ray, w_zero); 
+
+  float t = (a * e - b * d) / (a * c - b * b);
+  float s = (b * e - c * d) / (a * c - b * b);
+
+  // Return time to closest point on bone ray
+  if(getBoneRayTime) return t;
+  else return s;
+}
+
+float distBetweenRays(glm::vec3 eye_ray, glm::vec3 bone_ray, glm::vec3 bone_origin) {
+
+  glm::vec3 w_zero = eye - bone_origin;
+
+  float a = glm::dot(eye_ray, eye_ray);
+  float b = glm::dot(eye_ray, bone_ray);
+  float c = glm::dot(bone_ray, bone_ray);
+  float d = glm::dot(eye_ray, w_zero); 
+  float e = glm::dot(bone_ray, w_zero); 
+
+  float result = glm::length(w_zero + (((b * e - c * d) * eye_ray) - ((a * e - b * d) * bone_ray)) / (a * c - b * b));
+
+  return result;
+
+}
+
+void drawCylinderAroundBone(glm::vec4 basePoint, glm::vec3 direction, float length, int boneIndex) {
+  int numChunks = 8;
+  cylinder_vertices.clear();
+  cylinder_lines.clear();
+  for(float i = 0; i <= 2 * M_PI; i += M_PI / numChunks) {
+    glm::vec4 circ1_v1 = glm::vec4(0, kCylinderRadius * glm::cos(i), kCylinderRadius * glm::sin(i), 1);
+    glm::vec4 circ1_v2 = glm::vec4(0, kCylinderRadius * glm::cos(i + M_PI / numChunks), kCylinderRadius * glm::sin(i + M_PI / numChunks), 1);
+  
+    int circ1_v1_index = cylinder_vertices.size();
+    cylinder_vertices.push_back(circ1_v1);
+    int circ1_v2_index = cylinder_vertices.size();
+    cylinder_vertices.push_back(circ1_v2);  
+
+    cylinder_lines.push_back(glm::uvec2(circ1_v1_index, circ1_v2_index));
+
+
+    glm::vec4 circ2_v1 = glm::vec4(length / 2, kCylinderRadius * glm::cos(i), kCylinderRadius * glm::sin(i), 1);
+    glm::vec4 circ2_v2 = glm::vec4(length / 2, kCylinderRadius * glm::cos(i + M_PI / numChunks), kCylinderRadius * glm::sin(i + M_PI / numChunks), 1);
+  
+    int circ2_v1_index = cylinder_vertices.size();
+    cylinder_vertices.push_back(circ2_v1);
+    int circ2_v2_index = cylinder_vertices.size();
+    cylinder_vertices.push_back(circ2_v2);  
+
+    cylinder_lines.push_back(glm::uvec2(circ2_v1_index, circ2_v2_index));
+
+
+    glm::vec4 circ3_v1 = glm::vec4(length, kCylinderRadius * glm::cos(i), kCylinderRadius * glm::sin(i), 1);
+    glm::vec4 circ3_v2 = glm::vec4(length, kCylinderRadius * glm::cos(i + M_PI / numChunks), kCylinderRadius * glm::sin(i + M_PI / numChunks), 1);
+  
+    int circ3_v1_index = cylinder_vertices.size();
+    cylinder_vertices.push_back(circ3_v1);
+    int circ3_v2_index = cylinder_vertices.size();
+    cylinder_vertices.push_back(circ3_v2);  
+
+    cylinder_lines.push_back(glm::uvec2(circ3_v1_index, circ3_v2_index));
+
+    cylinder_lines.push_back(glm::uvec2(circ1_v1_index, circ2_v1_index));
+    cylinder_lines.push_back(glm::uvec2(circ1_v2_index, circ2_v2_index));
+
+    cylinder_lines.push_back(glm::uvec2(circ2_v1_index, circ2_v1_index));
+    cylinder_lines.push_back(glm::uvec2(circ3_v2_index, circ2_v2_index));
+  }
+
+  glm::mat4 boneCoords = coordMatrix(&bone_vector[boneIndex], false);
+  for(int i = 0; i < cylinder_vertices.size(); i++) {
+    cylinder_vertices[i] = boneCoords * cylinder_vertices[i];
+  }
+
+  // Switch to the cylinder VAO.
+  CHECK_GL_ERROR(glBindVertexArray(array_objects[kCylinderVao]));
+
+  // Generate buffer objects
+  CHECK_GL_ERROR(glGenBuffers(kNumVbos, &buffer_objects[kCylinderVao][0]));
+
+  // Setup vertex data in a VBO.
+  CHECK_GL_ERROR(
+      glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kCylinderVao][kVertexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                              sizeof(float) * cylinder_vertices.size() * 4,
+                              &cylinder_vertices[0], GL_STATIC_DRAW));
+  CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
+  CHECK_GL_ERROR(glEnableVertexAttribArray(0));
+
+  // Setup element array buffer.
+  CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+                              buffer_objects[kCylinderVao][kIndexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                              sizeof(uint32_t) * cylinder_lines.size() * 2,
+                              &cylinder_lines[0], GL_STATIC_DRAW));
+
+}
+
+
 void MousePosCallback(GLFWwindow* window, double mouse_x, double mouse_y) {
   last_x = current_x;
   last_y = current_y;
@@ -751,6 +883,46 @@ void MousePosCallback(GLFWwindow* window, double mouse_x, double mouse_y) {
     }
   } else {
     // maybe put some code here
+
+
+    float xNDC = mouse_x / window_width - 0.5;
+    float yNDC = mouse_y / window_height - 0.5;
+
+    float nearHeight = glm::tan(glm::radians(kFov * 0.5)) * kNear * 2;
+    float nearWidth = nearHeight * aspect;
+
+    glm::vec3 nearPlaneRay = glm::vec3(nearWidth * xNDC, nearHeight * yNDC, kNear);
+
+    glm::vec3 ray_world = glm::normalize(tangent * nearPlaneRay.x - up * nearPlaneRay.y - look * kNear);
+
+
+
+    float minDist = 10000000.0f;
+    int minDistIndex = 0;
+    for(int i = 1; i < bone_vector.size(); i++) {
+      float boneRayTime = timeToClosestPoint(ray_world, bone_vector[i].tangent, glm::vec3(bone_vector[i].origin.x, bone_vector[i].origin.y, bone_vector[i].origin.z), true);
+      float rayTime = timeToClosestPoint(ray_world, bone_vector[i].tangent, glm::vec3(bone_vector[i].origin.x, bone_vector[i].origin.y, bone_vector[i].origin.z), false);
+      float currDist = distBetweenRays(ray_world, bone_vector[i].tangent, glm::vec3(bone_vector[i].origin.x, bone_vector[i].origin.y, bone_vector[i].origin.z));
+      if(currDist <= minDist && currDist <= kCylinderRadius && (boneRayTime > 0 && boneRayTime < bone_vector[i].length) && rayTime > 0) {
+        minDist = currDist;
+        minDistIndex = i;
+        //std::cout << "HIT\n";
+      }
+    }
+    if(minDist < 10000000.0f) {
+      drawCylinderAroundBone(bone_vector[minDistIndex].origin, bone_vector[minDistIndex].tangent, bone_vector[minDistIndex].length, minDistIndex);
+      //std::cout << "DISTANCE TO NEAREST BONE: " << minDist << std::endl;
+      drawCylinder = true;
+    } else {
+      //std::cout << "NOT HITTING\n";
+      drawCylinder = false;
+    }
+    
+    //std::cout << "MOUSE X: " << mouse_x << " | MOUSE Y: " << mouse_y << std::endl;
+    //std::cout << "WORLD MOUSE: " << worldMouse << "\n";
+    //std::cout << "NEAR PLANE RAY: " << nearPlaneRay << "\n";
+    //std::cout << "WORLD RAY: " << ray_world << "\n";
+    //std::cout << "Near Plane Height: " << nearHeight << " Near Plane Width: " << nearWidth << std::endl;
   }
 }
 
@@ -899,6 +1071,30 @@ int main(int argc, char* argv[]) {
 
 
 
+  // Switch to the cylinder VAO.
+  CHECK_GL_ERROR(glBindVertexArray(array_objects[kCylinderVao]));
+
+  // Generate buffer objects
+  CHECK_GL_ERROR(glGenBuffers(kNumVbos, &buffer_objects[kCylinderVao][0]));
+
+  // Setup vertex data in a VBO.
+  CHECK_GL_ERROR(
+      glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kCylinderVao][kVertexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                              sizeof(float) * cylinder_vertices.size() * 4,
+                              &cylinder_vertices[0], GL_STATIC_DRAW));
+  CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
+  CHECK_GL_ERROR(glEnableVertexAttribArray(0));
+
+  // Setup element array buffer.
+  CHECK_GL_ERROR(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+                              buffer_objects[kCylinderVao][kIndexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                              sizeof(uint32_t) * cylinder_lines.size() * 2,
+                              &cylinder_lines[0], GL_STATIC_DRAW));
+
+
+
 
   // Triangle shaders
 
@@ -1012,6 +1208,60 @@ int main(int argc, char* argv[]) {
                      glGetUniformLocation(skeleton_program_id, "view"));
 
 
+
+  // Setup cylinder vertex shader.
+  GLuint cyl_vertex_shader_id = 0;
+  const char* cyl_vertex_source_pointer = cylinder_vertex_shader;
+  CHECK_GL_ERROR(cyl_vertex_shader_id = glCreateShader(GL_VERTEX_SHADER));
+  CHECK_GL_ERROR(
+      glShaderSource(cyl_vertex_shader_id, 1, &cyl_vertex_source_pointer, nullptr));
+  glCompileShader(cyl_vertex_shader_id);
+  CHECK_GL_SHADER_ERROR(cyl_vertex_shader_id);
+
+  // Setup cylinder geometry shader.
+  GLuint cyl_geometry_shader_id = 0;
+  const char* cyl_geometry_source_pointer = cylinder_geometry_shader;
+  CHECK_GL_ERROR(cyl_geometry_shader_id = glCreateShader(GL_GEOMETRY_SHADER));
+  CHECK_GL_ERROR(
+      glShaderSource(cyl_geometry_shader_id, 1, &cyl_geometry_source_pointer, nullptr));
+  glCompileShader(cyl_geometry_shader_id);
+  CHECK_GL_SHADER_ERROR(cyl_geometry_shader_id);
+
+
+  // Setup cylinder fragment shader.
+  GLuint cyl_fragment_shader_id = 0;
+  const char* cyl_fragment_source_pointer = cylinder_fragment_shader;
+  CHECK_GL_ERROR(cyl_fragment_shader_id = glCreateShader(GL_FRAGMENT_SHADER));
+  CHECK_GL_ERROR(glShaderSource(cyl_fragment_shader_id, 1,
+                                &cyl_fragment_source_pointer, nullptr));
+  glCompileShader(cyl_fragment_shader_id);
+  CHECK_GL_SHADER_ERROR(cyl_fragment_shader_id);
+
+  // Let's create our cylinder program.
+  GLuint cyl_program_id = 0;
+  CHECK_GL_ERROR(cyl_program_id = glCreateProgram());
+  CHECK_GL_ERROR(glAttachShader(cyl_program_id, cyl_vertex_shader_id));
+  CHECK_GL_ERROR(glAttachShader(cyl_program_id, cyl_fragment_shader_id));
+  CHECK_GL_ERROR(glAttachShader(cyl_program_id, cyl_geometry_shader_id));
+
+  // Bind attributes.
+  CHECK_GL_ERROR(glBindAttribLocation(cyl_program_id, 0, "vertex_position"));
+  CHECK_GL_ERROR(glBindFragDataLocation(cyl_program_id, 0, "fragment_color"));
+  glLinkProgram(cyl_program_id);
+  CHECK_GL_PROGRAM_ERROR(cyl_program_id);
+
+  // Get the uniform locations.
+  GLint cyl_projection_matrix_location = 0;
+  CHECK_GL_ERROR(cyl_projection_matrix_location =
+                     glGetUniformLocation(cyl_program_id, "projection"));
+  GLint cyl_model_matrix_location = 0;
+  CHECK_GL_ERROR(cyl_model_matrix_location =
+                     glGetUniformLocation(cyl_program_id, "model"));
+  GLint cyl_view_matrix_location = 0;
+  CHECK_GL_ERROR(cyl_view_matrix_location =
+                     glGetUniformLocation(cyl_program_id, "view"));
+
+
   while (!glfwWindowShouldClose(window)) {
     // Setup some basic window stuff.
     glfwGetFramebufferSize(window, &window_width, &window_height);
@@ -1061,7 +1311,7 @@ int main(int argc, char* argv[]) {
                                   GL_UNSIGNED_INT, 0));
 
 
-    // Bind to our floor VAO.
+    // Bind to our skeleton VAO.
     CHECK_GL_ERROR(glBindVertexArray(array_objects[kSkeletonVao]));
 
     // Use our program.
@@ -1078,6 +1328,28 @@ int main(int argc, char* argv[]) {
     // Draw our triangles.
     CHECK_GL_ERROR(glDrawElements(GL_LINES, bone_lines.size() * 2,
                                   GL_UNSIGNED_INT, 0));
+
+
+    if(drawCylinder) {
+      // Bind to our floor VAO.
+      CHECK_GL_ERROR(glBindVertexArray(array_objects[kCylinderVao]));
+
+      // Use our program.
+      CHECK_GL_ERROR(glUseProgram(cyl_program_id));
+
+      // Pass uniforms in.
+      CHECK_GL_ERROR(glUniformMatrix4fv(cyl_projection_matrix_location, 1,
+                                        GL_FALSE, &projection_matrix[0][0]));
+      CHECK_GL_ERROR(glUniformMatrix4fv(cyl_model_matrix_location, 1, GL_FALSE,
+                                        &floor_model_matrix[0][0]));
+      CHECK_GL_ERROR(glUniformMatrix4fv(cyl_view_matrix_location, 1, GL_FALSE,
+                                        &view_matrix[0][0]));
+
+      // Draw our triangles.
+      CHECK_GL_ERROR(glDrawElements(GL_LINES, cylinder_lines.size() * 2,
+                                    GL_UNSIGNED_INT, 0));
+    }
+
 
 
 
