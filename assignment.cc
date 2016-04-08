@@ -75,6 +75,8 @@ bool drawCylinder = false;
 bool rolling = false;
 bool transforming = false;
 int currHighlightedBone = -5;
+int currentTexture = 0;
+int texturing = 0;
 
 std::vector <std::vector<double> > weights(22, std::vector<double>(29960, 1));
 // end new code
@@ -109,6 +111,7 @@ int current_mouse_mode = 0;
 // We have these VBOs available for each VAO.
 enum {
   kVertexBuffer,
+  kUndeformedVertexBuffer,
   kIndexBuffer,
   kNumVbos
 };
@@ -299,9 +302,12 @@ const char* ogre_vertex_shader =
     "#version 330 core\n"
     "uniform vec4 light_position;"
     "in vec4 vertex_position;"
+    "in vec4 undeformed_vertex_position;"
+    "out vec4 u_vertex_position;"
     "out vec4 vs_light_direction;"
     "void main() {"
     "gl_Position = vertex_position;"
+    "u_vertex_position = undeformed_vertex_position;"
     "vs_light_direction = light_position - gl_Position;"
     "}";
 
@@ -314,6 +320,8 @@ const char* ogre_geometry_shader =
     "uniform mat4 view;"
     "uniform vec4 light_position;"
     "in vec4 vs_light_direction[];"
+    "in vec4 u_vertex_position[];"
+    "smooth out vec4 undeformed_vertex_position1;"
     "out vec4 face_normal;"
     "out vec4 light_direction;"
     "out vec4 world_position;"
@@ -329,6 +337,7 @@ const char* ogre_geometry_shader =
     "light_direction = normalize(vs_light_direction[n]);"
     "world_position = gl_in[n].gl_Position;"
     "gl_Position = projection * view * model * gl_in[n].gl_Position;"
+    "undeformed_vertex_position1 = u_vertex_position[n];"
     "EmitVertex();"
     "}"
     "EndPrimitive();"
@@ -339,36 +348,40 @@ const char* ogre_fragment_shader =
     "in vec4 face_normal;"
     "in vec4 light_direction;"
     "in vec4 world_position;"
+    "smooth in vec4 undeformed_vertex_position1;"
     "uniform vec4 center_of_mass;"
     "uniform float yMin;"
     "uniform float yMax;"
     "uniform float pi;"
     "uniform sampler2D textureSampler;"
+    "uniform int textured;"
     "out vec4 fragment_color;"
     "void main() {"
-    "vec4 pos = world_position;"
+    "vec4 pos = undeformed_vertex_position1;"
     "float u = (atan(pos.x - center_of_mass.x, pos.z - center_of_mass.z) + pi)/(2 * pi);"
     "float v = (pos.y - yMin) / (yMax - yMin);"
-    //"fragment_color = vec4(u, 0.0, 0.0, 1.0);"
+    //"float u = -(atan(pos.z - center_of_mass.z, -pos.x + center_of_mass.x))/(2 * pi);"
+    //"float v = (pos.y - yMin) / (yMax - yMin);"
+    //"fragment_color = vec4(v, 0.0, 0.0, 1.0);"
     "vec2 uvCoords = vec2(u, v);"
     "vec4 fragment_color_test = texture(textureSampler, uvCoords);"
     "fragment_color = fragment_color_test;"
-    //"fragment_color = vec4(0.0, 1.0, 0.0, 0.5);"
+    "if(textured == 0) fragment_color = vec4(0.0, 1.0, 0.0, 0.5);"
     "}";
 
-const char* ogre_texture_fragment_shader =
-    "#version 330 core\n"
-    "in vec4 face_normal;"
-    "in vec4 light_direction;"
-    "in vec4 world_position;"
-    "uniform vec4 center_of_mass;"
-    "uniform float yMin;"
-    "uniform float yMax;"
-    "out vec4 fragment_color;"
-    "void main() {"
-    "vec4 pos = world_position;"
-    "fragment_color = vec4(0.0, 1.0, 0.0, 0.5);"
-    "}";
+// const char* ogre_texture_fragment_shader =
+//     "#version 330 core\n"
+//     "in vec4 face_normal;"
+//     "in vec4 light_direction;"
+//     "in vec4 world_position;"
+//     "uniform vec4 center_of_mass;"
+//     "uniform float yMin;"
+//     "uniform float yMax;"
+//     "out vec4 fragment_color;"
+//     "void main() {"
+//     "vec4 pos = world_position;"
+//     "fragment_color = vec4(0.0, 1.0, 0.0, 0.5);"
+//     "}";
 
 
 
@@ -699,24 +712,12 @@ void LoadBones(const std::string& file)
         if(bone_vector[i].parent >= 0) {
           bone_vector[i].rotation = calculateRotation(&bone_vector[bone_vector[i].parent]) * bone_vector[i].rotation;
           bone_vector[i].defRotation = bone_vector[i].rotation;
-        }
-
-      //std::cout << "bone_vector[" << i << "] length is " << bone_vector[i].length << "\n";
-
-      //std::cout << "Translation matrix: " << bone_vector[i].translation << "\n\n";
-      //std::cout << "Rotation matrix: " << bone_vector[i].rotation << "\n\n";    
+        }  
 
 
       calculateEndpoints(&bone_vector[i], false);
 
-      if(i == 1) {
-      std::cout << "bone_vector[" << i << "] origin is " << bone_vector[i].origin << "\n";
-      std::cout << "bone_vector[" << i << "] endpoint is " << bone_vector[i].endpoint << "\n";
-      }
 
-      //std::cout << "SANITY CHECK: length between endpoint and origin is: " << glm::length(bone_vector[i].endpoint - bone_vector[i].origin) << "\n";
-      //std::cout << "\n";
-      //}
     }
 
 }
@@ -1074,6 +1075,12 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action,
       center += pan_speed * up;
   } else if (key == GLFW_KEY_C && action != GLFW_RELEASE) {
     fps_mode = !fps_mode;
+  } else if (key == GLFW_KEY_T && action != GLFW_RELEASE) {
+    if(currentTexture == 7) {
+      currentTexture = 0;
+    } else {
+      currentTexture++;   
+    }
   } else if (key == GLFW_KEY_M && action != GLFW_RELEASE) {
     current_mouse_mode = (current_mouse_mode + 1) % kNumMouseModes;
   } else if (key == GLFW_KEY_J && action != GLFW_RELEASE) {
@@ -1237,25 +1244,17 @@ void MousePosCallback(GLFWwindow* window, double mouse_x, double mouse_y) {
       if(currDist <= minDist && currDist <= kCylinderRadius && (boneRayTime > 0 && boneRayTime < bone_vector[i].length) && rayTime > 0) {
         minDist = currDist;
         minDistIndex = i;
-        //std::cout << "HIT\n";
       }
     }
     if(minDist < 10000000.0f) {
       drawCylinderAroundBone(bone_vector[minDistIndex].length, minDistIndex);
-      //std::cout << "DISTANCE TO NEAREST BONE: " << minDist << std::endl;
       drawCylinder = true;
       currHighlightedBone = minDistIndex;
     } else {
-      //std::cout << "NOT HITTING\n";
       drawCylinder = false;
       currHighlightedBone = -5;
     }
-    
-    //std::cout << "MOUSE X: " << mouse_x << " | MOUSE Y: " << mouse_y << std::endl;
-    //std::cout << "WORLD MOUSE: " << worldMouse << "\n";
-    //std::cout << "NEAR PLANE RAY: " << nearPlaneRay << "\n";
-    //std::cout << "WORLD RAY: " << ray_world << "\n";
-    //std::cout << "Near Plane Height: " << nearHeight << " Near Plane Width: " << nearWidth << std::endl;
+
   }
 }
 
@@ -1325,7 +1324,15 @@ int main(int argc, char* argv[]) {
 
   // Setup the object array object.
   LoadObj("ogre-rigged/ogre.obj", ogre_vertices, ogre_faces);
-  undeformed_ogre_vertices = ogre_vertices;
+
+  for(int i = 0; i < ogre_vertices.size(); i++) {
+    glm::vec4 newVertex = glm::vec4(0, 0, 0, 1);
+    newVertex.x = ogre_vertices[i].x;
+    newVertex.y = ogre_vertices[i].y;
+    newVertex.z = ogre_vertices[i].z;
+    undeformed_ogre_vertices.push_back(newVertex);
+  }
+  //undeformed_ogre_vertices = ogre_vertices;
   LoadBones("ogre-rigged/ogre-skeleton.bf");
   LoadWeights("ogre-rigged/ogre-weights.dmat", weights);
 
@@ -1356,6 +1363,7 @@ int main(int argc, char* argv[]) {
 
   glm::vec4 centerOfMass = glm::vec4(xTotal, yTotal, zTotal, 1);
 
+  std::cout << "images.size(): " << images.size() << std::endl;
 
   CHECK_GL_ERROR(glGenTextures(images.size(), texture_names));
 
@@ -1374,15 +1382,8 @@ int main(int argc, char* argv[]) {
     CHECK_GL_ERROR(glSamplerParameteri(sampler_names[i], GL_TEXTURE_MIN_FILTER, GL_LINEAR));
   }
 
+    CHECK_GL_ERROR(glActiveTexture(GL_TEXTURE0));
 
-  // TEXTURE 0
-  CHECK_GL_ERROR(glActiveTexture(GL_TEXTURE1));
-  CHECK_GL_ERROR(glBindTexture(GL_TEXTURE_2D, texture_names[1]));
-  CHECK_GL_ERROR(glBindSampler(1, sampler_names[1]));
-
-
-
-  //std::cout  << "bone[0][2] blending weight = " << weights[0][2] << "\n";
 
   // Setup our VAOs.
   CHECK_GL_ERROR(glGenVertexArrays(kNumVaos, array_objects));
@@ -1458,6 +1459,16 @@ int main(int argc, char* argv[]) {
   CHECK_GL_ERROR(glBufferData(GL_ELEMENT_ARRAY_BUFFER,
                               sizeof(uint32_t) * ogre_faces.size() * 3,
                               &ogre_faces[0], GL_STATIC_DRAW));
+
+
+  // Setup element array buffer.
+  CHECK_GL_ERROR(
+      glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kOgreVao][kUndeformedVertexBuffer]));
+  CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                              sizeof(float) * undeformed_ogre_vertices.size() * 4,
+                              &undeformed_ogre_vertices[0], GL_STATIC_DRAW));
+  CHECK_GL_ERROR(glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, 0));
+  CHECK_GL_ERROR(glEnableVertexAttribArray(1));
 
 
 
@@ -1650,6 +1661,9 @@ int main(int argc, char* argv[]) {
   GLint cyl_view_matrix_location = 0;
   CHECK_GL_ERROR(cyl_view_matrix_location =
                      glGetUniformLocation(cyl_program_id, "view"));
+  GLint cyl_bone_pos_location = 0;
+  CHECK_GL_ERROR(cyl_bone_pos_location =
+                     glGetUniformLocation(cyl_program_id, "bone_pos"));
 
 
 
@@ -1692,6 +1706,7 @@ int main(int argc, char* argv[]) {
 
   // Bind attributes.
   CHECK_GL_ERROR(glBindAttribLocation(ogre_program_id, 0, "vertex_position"));
+  CHECK_GL_ERROR(glBindAttribLocation(ogre_program_id, 1, "undeformed_vertex_position"));
   CHECK_GL_ERROR(glBindFragDataLocation(ogre_program_id, 0, "fragment_color"));
   glLinkProgram(ogre_program_id);
   CHECK_GL_PROGRAM_ERROR(ogre_program_id);
@@ -1721,12 +1736,22 @@ int main(int argc, char* argv[]) {
   GLint ogre_pi_location = 0;
   CHECK_GL_ERROR(ogre_pi_location =
                      glGetUniformLocation(ogre_program_id, "pi"));
-  GLint ogre_sampler_location = 0;
-  CHECK_GL_ERROR(ogre_sampler_location =
-                     glGetUniformLocation(ogre_program_id, "textureSampler"));
+  GLint ogre_texflag_location = 0;
+  CHECK_GL_ERROR(ogre_texflag_location =
+                     glGetUniformLocation(ogre_program_id, "textured"));
 
 
   while (!glfwWindowShouldClose(window)) {
+
+      if(currentTexture == 0) {
+        texturing = false;
+
+      } else {
+        texturing = true;
+
+      }
+
+
       for(int i = 1; i < bone_vector.size(); i++) {
         glm::mat4 U = coordMatrix(&bone_vector[i], false, false);
         glm::mat4 D = coordMatrix(&bone_vector[i], false, true);
@@ -1742,19 +1767,12 @@ int main(int argc, char* argv[]) {
         glm::vec4 newVertex;
 
         for(int i = 1; i < bone_vector.size(); i++) {
-          // std::cout << "WEIGHT: " << (float)weights[i-1][j] << "\n";
-          // std::cout << "U inverse: \n" << glm::inverse(bone_vector[i].U) << "\n\n";
-          // std::cout << "D: \n" << bone_vector[i].D << "\n\n";
-          // std::cout << "UNDEFORMED VERTEX: " << temp_ogre_vertices[j] << "\n\n\n\n";
 
           newVertex += (float)weights[i-1][j] * bone_vector[i].D * glm::inverse(bone_vector[i].U) * temp_ogre_vertices[j]; 
 
-          //std::cout << newVertex << "\n";
         }
         ogre_vertices.push_back(newVertex);
       }
-
-      //std::cout << ogre_vertices << "\n\n";
 
       // Switch to the ogre VAO.
       CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
@@ -1767,6 +1785,15 @@ int main(int argc, char* argv[]) {
                                   &ogre_vertices[0], GL_STATIC_DRAW));
       CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
       CHECK_GL_ERROR(glEnableVertexAttribArray(0));
+
+      //Setup vertex data in a VBO.
+      CHECK_GL_ERROR(
+          glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kOgreVao][kUndeformedVertexBuffer]));
+      CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                                  sizeof(float) * undeformed_ogre_vertices.size() * 4,
+                                  &undeformed_ogre_vertices[0], GL_STATIC_DRAW));
+      CHECK_GL_ERROR(glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, 0));
+      CHECK_GL_ERROR(glEnableVertexAttribArray(1));
     
 
 
@@ -1886,14 +1913,19 @@ int main(int argc, char* argv[]) {
 
     CHECK_GL_ERROR(
         glUniform1f(ogre_pi_location, M_PI));
-
     CHECK_GL_ERROR(
-        glUniform1i(ogre_sampler_location, sampler_names[1]));
+        glUniform1i(ogre_texflag_location, texturing));
+
+    if(texturing) {
+        CHECK_GL_ERROR(glBindTexture(GL_TEXTURE_2D, texture_names[currentTexture-1]));
+        CHECK_GL_ERROR(glBindSampler(0, sampler_names[0]));
+    }
+
+    
 
     // Draw our triangles.
     CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
                                   GL_UNSIGNED_INT, 0));
-
 
     // Poll and swap.
     glfwPollEvents();
