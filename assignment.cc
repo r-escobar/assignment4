@@ -51,6 +51,9 @@ struct Bone
 
   glm::mat4 defRotation;
 
+  glm::mat4 U;
+  glm::mat4 D;
+
   glm::vec4 origin;
   glm::vec4 endpoint;
 };
@@ -59,6 +62,7 @@ std::vector<Bone> bone_vector;
 
 std::vector<glm::vec4> ogre_vertices;
 std::vector<glm::uvec3> ogre_faces;
+std::vector<glm::vec4> undeformed_ogre_vertices;
 
 std::vector<glm::vec4> bone_vertices;
 std::vector<glm::uvec2> bone_lines;
@@ -68,6 +72,8 @@ std::vector<glm::uvec2> cylinder_lines;
 
 
 bool drawCylinder = false;
+bool rolling = false;
+bool transforming = false;
 int currHighlightedBone = -5;
 
 std::vector <std::vector<double> > weights(22, std::vector<double>(29960, 1));
@@ -119,6 +125,9 @@ enum {
 GLuint array_objects[kNumVaos];  // This will store the VAO descriptors.
 GLuint buffer_objects[kNumVaos][kNumVbos];  // These will store VBO descriptors.
 
+GLuint texture_names[7];
+GLuint sampler_names[7];
+
 float last_x = 0.0f, last_y = 0.0f, current_x = 0.0f, current_y = 0.0f;
 bool drag_state = false;
 int current_button = -1;
@@ -140,6 +149,7 @@ glm::mat4 projection_matrix =
     glm::perspective((float)(kFov * (M_PI / 180.0f)), aspect, kNear, kFar);
 glm::mat4 model_matrix = glm::mat4(1.0f);
 glm::mat4 floor_model_matrix = glm::mat4(1.0f);
+glm::mat4 ogre_model_matrix = glm::mat4(1.0f);
 
 const char* vertex_shader =
     "#version 330 core\n"
@@ -285,6 +295,83 @@ const char* cylinder_fragment_shader =
     "}";
 
 
+const char* ogre_vertex_shader =
+    "#version 330 core\n"
+    "uniform vec4 light_position;"
+    "in vec4 vertex_position;"
+    "out vec4 vs_light_direction;"
+    "void main() {"
+    "gl_Position = vertex_position;"
+    "vs_light_direction = light_position - gl_Position;"
+    "}";
+
+const char* ogre_geometry_shader =
+    "#version 330 core\n"
+    "layout (triangles) in;"
+    "layout (triangle_strip, max_vertices = 3) out;"
+    "uniform mat4 projection;"
+    "uniform mat4 model;"
+    "uniform mat4 view;"
+    "uniform vec4 light_position;"
+    "in vec4 vs_light_direction[];"
+    "out vec4 face_normal;"
+    "out vec4 light_direction;"
+    "out vec4 world_position;"
+    "void main() {"
+    "int n = 0;"
+    "vec3 a = gl_in[0].gl_Position.xyz;"
+    "vec3 b = gl_in[1].gl_Position.xyz;"
+    "vec3 c = gl_in[2].gl_Position.xyz;"
+    "vec3 u = normalize(b - a);"
+    "vec3 v = normalize(c - a);"
+    "face_normal = normalize(vec4(normalize(cross(u, v)), 0.0));"
+    "for (n = 0; n < gl_in.length(); n++) {"
+    "light_direction = normalize(vs_light_direction[n]);"
+    "world_position = gl_in[n].gl_Position;"
+    "gl_Position = projection * view * model * gl_in[n].gl_Position;"
+    "EmitVertex();"
+    "}"
+    "EndPrimitive();"
+    "}";
+
+const char* ogre_fragment_shader =
+    "#version 330 core\n"
+    "in vec4 face_normal;"
+    "in vec4 light_direction;"
+    "in vec4 world_position;"
+    "uniform vec4 center_of_mass;"
+    "uniform float yMin;"
+    "uniform float yMax;"
+    "uniform float pi;"
+    "uniform sampler2D textureSampler;"
+    "out vec4 fragment_color;"
+    "void main() {"
+    "vec4 pos = world_position;"
+    "float u = (atan(pos.x - center_of_mass.x, pos.z - center_of_mass.z) + pi)/(2 * pi);"
+    "float v = (pos.y - yMin) / (yMax - yMin);"
+    //"fragment_color = vec4(u, 0.0, 0.0, 1.0);"
+    "vec2 uvCoords = vec2(u, v);"
+    "vec4 fragment_color_test = texture(textureSampler, uvCoords);"
+    "fragment_color = fragment_color_test;"
+    //"fragment_color = vec4(0.0, 1.0, 0.0, 0.5);"
+    "}";
+
+const char* ogre_texture_fragment_shader =
+    "#version 330 core\n"
+    "in vec4 face_normal;"
+    "in vec4 light_direction;"
+    "in vec4 world_position;"
+    "uniform vec4 center_of_mass;"
+    "uniform float yMin;"
+    "uniform float yMax;"
+    "out vec4 fragment_color;"
+    "void main() {"
+    "vec4 pos = world_position;"
+    "fragment_color = vec4(0.0, 1.0, 0.0, 0.5);"
+    "}";
+
+
+
 const char* OpenGlErrorToString(GLenum error) {
   switch (error) {
     case GL_NO_ERROR:
@@ -426,7 +513,7 @@ void LoadWeights(const std::string& file, std::vector<std::vector<double>>& weig
     double blending_weight;
     in >> bone_num >> bone_verts;
     std::cout << "number of bones: " << bone_num << "\n";
-    std::cout << "number of vertices per bone " << bone_verts << "\n";
+    std::cout << "number of weights per bone " << bone_verts << "\n";
     for (int i = 0; i < 22; i++)
     {
       for (int j = 0; j < 29960; j++)
@@ -437,17 +524,26 @@ void LoadWeights(const std::string& file, std::vector<std::vector<double>>& weig
     }
 }
 
-glm::mat4 coordMatrix(Bone* currBone, bool origin) {
+glm::mat4 coordMatrix(Bone* currBone, bool origin, bool deformed) {
   if(currBone->parent  < 0) {
-    if(origin)
-      return currBone->translation;
-    else
-      return currBone->translation * currBone->defRotation;
+    if(origin) {
+      return glm::mat4(currBone->translation);      
+    } else {
+      if(deformed)
+        return glm::mat4(currBone->translation * currBone->defRotation);
+      else 
+        return glm::mat4(currBone->translation * currBone->rotation);
+    }
   } else {
     if(origin)
-      return coordMatrix(&bone_vector[currBone->parent], false) * currBone->translation;
-    else
-     return coordMatrix(&bone_vector[currBone->parent], false) * currBone->translation * currBone->defRotation;
+      return glm::mat4(coordMatrix(&bone_vector[currBone->parent], false, true) * currBone->translation);
+    else {
+      if(deformed)
+        return glm::mat4(coordMatrix(&bone_vector[currBone->parent], false, true) * currBone->translation * currBone->defRotation);
+      else 
+        return glm::mat4(coordMatrix(&bone_vector[currBone->parent], false, false) * currBone->translation * currBone->rotation);
+    }
+
   }
 }
 
@@ -466,8 +562,8 @@ void calculateEndpoints(Bone* currBone, bool calcAxes) {
     currBone->endpoint = currBone->origin;
   } else {
 
-    currBone->origin = coordMatrix(currBone, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
-    currBone->endpoint = coordMatrix(currBone, false) * glm::vec4(currBone->length, 0.000000, 0.000000, 1.000000);
+    currBone->origin = coordMatrix(currBone, true, true) * glm::vec4(0.000000, 0.000000, 0.000000, 1.000000);
+    currBone->endpoint = coordMatrix(currBone, false, true) * glm::vec4(currBone->length, 0.000000, 0.000000, 1.000000);
     
     if(calcAxes) {
       glm::vec4 tempTangent = propogateRotations(currBone) * glm::vec4(1.000000, 0.000000, 0.000000, 0.000000);
@@ -771,7 +867,7 @@ void drawCylinderAroundBone(float length, int boneIndex) {
 
   cylinder_lines.push_back(glm::uvec2(index1, index2));
 
-  glm::mat4 boneCoords = coordMatrix(&bone_vector[boneIndex], false);
+  glm::mat4 boneCoords = coordMatrix(&bone_vector[boneIndex], false, true);
   for(int i = 0; i < cylinder_vertices.size(); i++) {
     cylinder_vertices[i] = boneCoords * cylinder_vertices[i];
   }
@@ -806,6 +902,15 @@ void drawCylinderAroundBone(float length, int boneIndex) {
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action,
                  int mods) {
+
+
+  if ((key == GLFW_KEY_LEFT && action != GLFW_RELEASE && current_mouse_mode != kMouseModeCamera) || (key == GLFW_KEY_RIGHT && action != GLFW_RELEASE && current_mouse_mode != kMouseModeCamera)) {
+    rolling = true;
+  } else {
+    rolling = false;
+  }
+
+
   if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
     glfwSetWindowShouldClose(window, GL_TRUE);
   else if (key == GLFW_KEY_W && action != GLFW_RELEASE) {
@@ -1030,6 +1135,8 @@ void MousePosCallback(GLFWwindow* window, double mouse_x, double mouse_y) {
   glm::vec2 mouse_start = glm::vec2(last_x, last_y);
   glm::vec2 mouse_end = glm::vec2(current_x, current_y);
   glm::uvec4 viewport = glm::uvec4(0, 0, window_width, window_height);
+
+
   if (drag_state && current_button == GLFW_MOUSE_BUTTON_LEFT) {
     if (current_mouse_mode == kMouseModeCamera) {
       glm::vec3 axis = glm::normalize(
@@ -1107,6 +1214,7 @@ void MousePosCallback(GLFWwindow* window, double mouse_x, double mouse_y) {
 
     }
   } else {
+
 
     float xNDC = mouse_x / window_width - 0.5;
     float yNDC = mouse_y / window_height - 0.5;
@@ -1217,10 +1325,64 @@ int main(int argc, char* argv[]) {
 
   // Setup the object array object.
   LoadObj("ogre-rigged/ogre.obj", ogre_vertices, ogre_faces);
+  undeformed_ogre_vertices = ogre_vertices;
   LoadBones("ogre-rigged/ogre-skeleton.bf");
   LoadWeights("ogre-rigged/ogre-weights.dmat", weights);
 
-  std::cout  << "bone[0][2] blending weight = " << weights[0][2] << "\n";
+  float xTotal = 0;
+  float yTotal = 0;
+  float zTotal = 0;
+  float yMin = 1000000000.0f;
+  float yMax = -1000000000.0f;
+
+  for(int i = 0; i < undeformed_ogre_vertices.size(); i++) {
+    xTotal += undeformed_ogre_vertices[i].x;
+    yTotal += undeformed_ogre_vertices[i].y;
+    zTotal += undeformed_ogre_vertices[i].z;
+
+    if(undeformed_ogre_vertices[i].y < yMin) {
+      yMin = undeformed_ogre_vertices[i].y;
+    }
+
+    if(undeformed_ogre_vertices[i].y > yMax) {
+      yMax = undeformed_ogre_vertices[i].y;
+    }
+  }
+
+
+  xTotal /= undeformed_ogre_vertices.size();
+  yTotal /= undeformed_ogre_vertices.size();
+  zTotal /= undeformed_ogre_vertices.size();
+
+  glm::vec4 centerOfMass = glm::vec4(xTotal, yTotal, zTotal, 1);
+
+
+  CHECK_GL_ERROR(glGenTextures(images.size(), texture_names));
+
+  for(int i = 0; i < images.size(); i++) {
+    CHECK_GL_ERROR(glBindTexture(GL_TEXTURE_2D, texture_names[i]));
+    CHECK_GL_ERROR(glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB8, images[i].width, images[i].height));
+    CHECK_GL_ERROR(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, images[i].width, images[i].height, GL_RGB, GL_UNSIGNED_BYTE, images[i].bytes));
+    CHECK_GL_ERROR(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT));
+    CHECK_GL_ERROR(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT));
+  }
+
+  CHECK_GL_ERROR(glGenSamplers(images.size(), sampler_names));
+
+  for(int i = 0; i < images.size(); i++) {
+    CHECK_GL_ERROR(glSamplerParameteri(sampler_names[i], GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    CHECK_GL_ERROR(glSamplerParameteri(sampler_names[i], GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+  }
+
+
+  // TEXTURE 0
+  CHECK_GL_ERROR(glActiveTexture(GL_TEXTURE1));
+  CHECK_GL_ERROR(glBindTexture(GL_TEXTURE_2D, texture_names[1]));
+  CHECK_GL_ERROR(glBindSampler(1, sampler_names[1]));
+
+
+
+  //std::cout  << "bone[0][2] blending weight = " << weights[0][2] << "\n";
 
   // Setup our VAOs.
   CHECK_GL_ERROR(glGenVertexArrays(kNumVaos, array_objects));
@@ -1490,7 +1652,124 @@ int main(int argc, char* argv[]) {
                      glGetUniformLocation(cyl_program_id, "view"));
 
 
+
+
+
+
+  // Setup ogre_vertex shader.
+  GLuint ogre_vertex_shader_id = 0;
+  const char* ogre_vertex_source_pointer = ogre_vertex_shader;
+  CHECK_GL_ERROR(ogre_vertex_shader_id = glCreateShader(GL_VERTEX_SHADER));
+  CHECK_GL_ERROR(
+      glShaderSource(ogre_vertex_shader_id, 1, &ogre_vertex_source_pointer, nullptr));
+  glCompileShader(ogre_vertex_shader_id);
+  CHECK_GL_SHADER_ERROR(ogre_vertex_shader_id);
+
+  // Setup ogre_geometry shader.
+  GLuint ogre_geometry_shader_id = 0;
+  const char* ogre_geometry_source_pointer = ogre_geometry_shader;
+  CHECK_GL_ERROR(ogre_geometry_shader_id = glCreateShader(GL_GEOMETRY_SHADER));
+  CHECK_GL_ERROR(
+      glShaderSource(ogre_geometry_shader_id, 1, &ogre_geometry_source_pointer, nullptr));
+  glCompileShader(ogre_geometry_shader_id);
+  CHECK_GL_SHADER_ERROR(ogre_geometry_shader_id);
+
+  // Setup ogre fragment shader.
+  GLuint ogre_fragment_shader_id = 0;
+  const char* ogre_fragment_source_pointer = ogre_fragment_shader;
+  CHECK_GL_ERROR(ogre_fragment_shader_id = glCreateShader(GL_FRAGMENT_SHADER));
+  CHECK_GL_ERROR(glShaderSource(ogre_fragment_shader_id, 1,
+                                &ogre_fragment_source_pointer, nullptr));
+  glCompileShader(ogre_fragment_shader_id);
+  CHECK_GL_SHADER_ERROR(ogre_fragment_shader_id);
+
+  // Let's create our ogre program.
+  GLuint ogre_program_id = 0;
+  CHECK_GL_ERROR(ogre_program_id = glCreateProgram());
+  CHECK_GL_ERROR(glAttachShader(ogre_program_id, ogre_vertex_shader_id));
+  CHECK_GL_ERROR(glAttachShader(ogre_program_id, ogre_fragment_shader_id));
+  CHECK_GL_ERROR(glAttachShader(ogre_program_id, ogre_geometry_shader_id));
+
+  // Bind attributes.
+  CHECK_GL_ERROR(glBindAttribLocation(ogre_program_id, 0, "vertex_position"));
+  CHECK_GL_ERROR(glBindFragDataLocation(ogre_program_id, 0, "fragment_color"));
+  glLinkProgram(ogre_program_id);
+  CHECK_GL_PROGRAM_ERROR(ogre_program_id);
+
+  // Get the uniform locations.
+  GLint ogre_projection_matrix_location = 0;
+  CHECK_GL_ERROR(ogre_projection_matrix_location =
+                     glGetUniformLocation(ogre_program_id, "projection"));
+  GLint ogre_model_matrix_location = 0;
+  CHECK_GL_ERROR(ogre_model_matrix_location =
+                     glGetUniformLocation(ogre_program_id, "model"));
+  GLint ogre_view_matrix_location = 0;
+  CHECK_GL_ERROR(ogre_view_matrix_location =
+                     glGetUniformLocation(ogre_program_id, "view"));
+  GLint ogre_light_position_location = 0;
+  CHECK_GL_ERROR(ogre_light_position_location =
+                     glGetUniformLocation(ogre_program_id, "light_position"));
+  GLint ogre_center_of_mass_location = 0;
+  CHECK_GL_ERROR(ogre_center_of_mass_location =
+                     glGetUniformLocation(ogre_program_id, "center_of_mass"));
+  GLint ogre_y_min_location = 0;
+  CHECK_GL_ERROR(ogre_y_min_location =
+                     glGetUniformLocation(ogre_program_id, "yMin"));
+  GLint ogre_y_max_location = 0;
+  CHECK_GL_ERROR(ogre_y_max_location =
+                     glGetUniformLocation(ogre_program_id, "yMax"));
+  GLint ogre_pi_location = 0;
+  CHECK_GL_ERROR(ogre_pi_location =
+                     glGetUniformLocation(ogre_program_id, "pi"));
+  GLint ogre_sampler_location = 0;
+  CHECK_GL_ERROR(ogre_sampler_location =
+                     glGetUniformLocation(ogre_program_id, "textureSampler"));
+
+
   while (!glfwWindowShouldClose(window)) {
+      for(int i = 1; i < bone_vector.size(); i++) {
+        glm::mat4 U = coordMatrix(&bone_vector[i], false, false);
+        glm::mat4 D = coordMatrix(&bone_vector[i], false, true);
+
+        bone_vector[i].U = U;
+        bone_vector[i].D = D;
+      }
+
+      std::vector<glm::vec4> temp_ogre_vertices = undeformed_ogre_vertices;
+      ogre_vertices.clear();
+
+      for(int j = 0; j < temp_ogre_vertices.size(); j++) {
+        glm::vec4 newVertex;
+
+        for(int i = 1; i < bone_vector.size(); i++) {
+          // std::cout << "WEIGHT: " << (float)weights[i-1][j] << "\n";
+          // std::cout << "U inverse: \n" << glm::inverse(bone_vector[i].U) << "\n\n";
+          // std::cout << "D: \n" << bone_vector[i].D << "\n\n";
+          // std::cout << "UNDEFORMED VERTEX: " << temp_ogre_vertices[j] << "\n\n\n\n";
+
+          newVertex += (float)weights[i-1][j] * bone_vector[i].D * glm::inverse(bone_vector[i].U) * temp_ogre_vertices[j]; 
+
+          //std::cout << newVertex << "\n";
+        }
+        ogre_vertices.push_back(newVertex);
+      }
+
+      //std::cout << ogre_vertices << "\n\n";
+
+      // Switch to the ogre VAO.
+      CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
+
+      //Setup vertex data in a VBO.
+      CHECK_GL_ERROR(
+          glBindBuffer(GL_ARRAY_BUFFER, buffer_objects[kOgreVao][kVertexBuffer]));
+      CHECK_GL_ERROR(glBufferData(GL_ARRAY_BUFFER,
+                                  sizeof(float) * ogre_vertices.size() * 4,
+                                  &ogre_vertices[0], GL_STATIC_DRAW));
+      CHECK_GL_ERROR(glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 0, 0));
+      CHECK_GL_ERROR(glEnableVertexAttribArray(0));
+    
+
+
     // Setup some basic window stuff.
     glfwGetFramebufferSize(window, &window_width, &window_height);
     glViewport(0, 0, window_width, window_height);
@@ -1581,25 +1860,39 @@ int main(int argc, char* argv[]) {
 
 
 
-    // // Bind to our floor VAO.
-    // CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
+    // Bind to our ogre VAO.
+    CHECK_GL_ERROR(glBindVertexArray(array_objects[kOgreVao]));
 
-    // // Use our program.
-    // CHECK_GL_ERROR(glUseProgram(floor_program_id));
+    // Use our program.
+    CHECK_GL_ERROR(glUseProgram(ogre_program_id));
 
-    // // Pass uniforms in.
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_projection_matrix_location, 1,
-    //                                   GL_FALSE, &projection_matrix[0][0]));
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_model_matrix_location, 1, GL_FALSE,
-    //                                   &floor_model_matrix[0][0]));
-    // CHECK_GL_ERROR(glUniformMatrix4fv(floor_view_matrix_location, 1, GL_FALSE,
-    //                                   &view_matrix[0][0]));
-    // CHECK_GL_ERROR(
-    //     glUniform4fv(floor_light_position_location, 1, &light_position[0]));
+    // Pass uniforms in.
+    CHECK_GL_ERROR(glUniformMatrix4fv(ogre_projection_matrix_location, 1,
+                                      GL_FALSE, &projection_matrix[0][0]));
+    CHECK_GL_ERROR(glUniformMatrix4fv(ogre_model_matrix_location, 1, GL_FALSE,
+                                      &ogre_model_matrix[0][0]));
+    CHECK_GL_ERROR(glUniformMatrix4fv(ogre_view_matrix_location, 1, GL_FALSE,
+                                      &view_matrix[0][0]));
+    CHECK_GL_ERROR(
+        glUniform4fv(ogre_light_position_location, 1, &light_position[0]));
 
-    // // Draw our triangles.
-    // CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
-    //                               GL_UNSIGNED_INT, 0));
+    CHECK_GL_ERROR(
+        glUniform4fv(ogre_center_of_mass_location, 1, &centerOfMass[0]));
+
+    CHECK_GL_ERROR(
+        glUniform1f(ogre_y_min_location, yMin));
+    CHECK_GL_ERROR(
+        glUniform1f(ogre_y_max_location, yMax));
+
+    CHECK_GL_ERROR(
+        glUniform1f(ogre_pi_location, M_PI));
+
+    CHECK_GL_ERROR(
+        glUniform1i(ogre_sampler_location, sampler_names[1]));
+
+    // Draw our triangles.
+    CHECK_GL_ERROR(glDrawElements(GL_TRIANGLES, ogre_faces.size() * 3,
+                                  GL_UNSIGNED_INT, 0));
 
 
     // Poll and swap.
